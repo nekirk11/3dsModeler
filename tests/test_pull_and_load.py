@@ -1981,6 +1981,148 @@ class EmbeddedLauncherTests(unittest.TestCase):
             "start", sys.modules["_max2025_pull_and_load_companion"].__dict__
         )
 
+    def test_embedded_fresh_session_fast_forwards_before_companion(self):
+        write_checkout(self.checkout)
+        write_companion(self.checkout)
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        # This process already imported the package; emulate a fresh Max session.
+        namespace["_alias_loaded"] = lambda: False
+        calls: list = []
+        responses = embedded_checkout_responses(self.checkout, SHA_ONE, SHA_TWO)
+        responses[("pull", "--ff-only", "origin", "dev")] = ""
+        base_run = embedded_git_stub(responses, calls)
+        head_values = iter((SHA_ONE, SHA_ONE, SHA_TWO))
+
+        def run(args, cwd, timeout):
+            key = tuple(str(item) for item in args)
+            if key == ("rev-parse", "HEAD"):
+                calls.append(key)
+                return (0, next(head_values), "")
+            return base_run(args, cwd, timeout)
+
+        namespace["_run_git"] = run
+        namespace["_run_git_bytes"] = embedded_git_bytes_stub(COMPANION_BYTES)
+        result = namespace["_existing_result"]()
+        self.assertEqual(result["action"], "clone")
+        self.assertEqual(result["head"], SHA_TWO)
+        self.assertEqual(result["remote_sha"], SHA_TWO)
+        self.assertIn(("pull", "--ff-only", "origin", "dev"), calls)
+        self.assertEqual(
+            calls[-1], ("rev-parse", "HEAD")
+        )
+
+    def test_embedded_loaded_session_never_fast_forwards(self):
+        write_checkout(self.checkout)
+        write_companion(self.checkout)
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        namespace["_alias_loaded"] = lambda: False
+        namespace["_session"]().loaded_head_sha = SHA_ONE
+        calls: list = []
+        responses = embedded_checkout_responses(self.checkout, SHA_ONE, SHA_TWO)
+        namespace["_run_git"] = embedded_git_stub(responses, calls)
+        namespace["_run_git_bytes"] = embedded_git_bytes_stub(COMPANION_BYTES)
+        with self.assertRaises(namespace["_GitFailure"]) as raised:
+            namespace["_existing_result"]()
+        self.assertEqual(raised.exception.category, "restart_required")
+        self.assertNotIn(("pull", "--ff-only", "origin", "dev"), calls)
+
+    def test_qt_bridge_does_not_shadow_qobject_connect(self):
+        """PySide6 forwards Signal.connect to QObject.connect with 5 args."""
+
+        class _FakeSignalInstance:
+            def __init__(self, owner):
+                self._owner = owner
+                self._slots = []
+
+            def connect(self, slot, conn_type):
+                # Mirrors PySide6 6.5.3: SignalInstance.connect internally
+                # calls QObject.connect(self, signal, receiver, slot, type).
+                self._owner.connect(
+                    self._owner, "completed", slot, slot, conn_type
+                )
+                self._slots.append(slot)
+
+            def emit(self, value):
+                for slot in list(self._slots):
+                    slot(value)
+
+        class _FakeSignal:
+            def __init__(self, *args, **kwargs):
+                self.name = None
+
+            def __set_name__(self, owner, name):
+                self.name = name
+
+            def __get__(self, instance, owner):
+                if instance is None:
+                    return self
+                signal = instance.__dict__.get(self.name)
+                if signal is None:
+                    signal = _FakeSignalInstance(instance)
+                    instance.__dict__[self.name] = signal
+                return signal
+
+        connect_calls: list = []
+
+        class _QObject:
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+
+            def connect(self, sender, signal, receiver, slot, conn_type):
+                connect_calls.append((sender, signal, receiver, slot, conn_type))
+
+            def moveToThread(self, thread):
+                return None
+
+        class _Application:
+            @classmethod
+            def instance(cls):
+                return cls()
+
+            def thread(self):
+                return object()
+
+        def _slot(*args, **kwargs):
+            def decorate(fn):
+                assert not getattr(fn, "__annotations__", None), fn.__annotations__
+                return fn
+
+            return decorate
+
+        qtcore = types.ModuleType("PySide6.QtCore")
+        qtcore.QObject = _QObject
+        qtcore.Signal = _FakeSignal
+        qtcore.Slot = _slot
+        qtcore.Qt = SimpleNamespace(
+            ConnectionType=SimpleNamespace(QueuedConnection=0)
+        )
+        qtwidgets = types.ModuleType("PySide6.QtWidgets")
+        qtwidgets.QApplication = _Application
+        pyside = types.ModuleType("PySide6")
+        pyside.QtCore = qtcore
+        pyside.QtWidgets = qtwidgets
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "PySide6": pyside,
+                "PySide6.QtCore": qtcore,
+                "PySide6.QtWidgets": qtwidgets,
+            },
+        ):
+            bridge = launcher._qt_bridge_factory()
+
+        # The returned handle must be plain Python, never a QObject subclass.
+        self.assertFalse(isinstance(bridge, _QObject))
+        self.assertEqual(len(connect_calls), 1)
+        self.assertEqual(connect_calls[0][1], "completed")
+        delivered: list = []
+        bridge.connect(delivered.append)
+        bridge.emit({"ok": True})
+        self.assertEqual(delivered, [{"ok": True}])
+
     def test_embedded_companion_digest_mismatch_blocks_execution(self):
         write_checkout(self.checkout)
         write_companion(self.checkout)

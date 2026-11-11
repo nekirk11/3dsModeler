@@ -644,3 +644,59 @@ Python bridge, real Windows Git transport and the empty-directory clone path
 against live GitHub, the Listener tip rendering in Max, live clone/update from
 Max, and Qt queued delivery inside Max. The Windows and POSIX process paths are
 simulated in tests only.
+
+## Launcher Cycle 4 fixes: QObject.connect collision and fresh-session fast-forward (2026-11-11)
+
+**Finding 1 — the Qt bridge raised a live `TypeError` in Max 2025.**
+The diagnostic caught:
+`TypeError: _qt_bridge_factory.<locals>._Bridge.connect() takes 2 positional
+arguments but 5 were given`. `_Bridge` inherited `QtCore.QObject` and overrode
+`connect(self, slot)`. In PySide6 6.5.3,
+`self.completed.connect(self._deliver, QtCore.Qt.ConnectionType.QueuedConnection)`
+internally invokes `QObject.connect(self, signal, receiver, slot, type)` with
+five positional arguments, so the override collided with Shiboken's internal
+call before the worker could ever start.
+
+**Fix:** the QObject subclass is now `_QtRelay`, which defines only the
+`completed` signal, `__init__`, and the `@Slot(object)` `_deliver`; it never
+shadows `QObject.connect`. `relay.moveToThread(application.thread())` runs on
+the relay. `_qt_bridge_factory` returns a plain-Python `_Bridge(_SignalBridge)`
+that is **not** a `QObject`, holds a strong `self._relay`, and implements only
+`connect` (append to `relay._slots`) and `emit` (`relay.completed.emit`).
+`_on_git_finished` also wraps `load_checkout_package(...)` and
+`bootstrap.show_tools()` so any unexpected non-`LauncherError` prints one
+bounded, ASCII-clean `<ExcType>: <reason>` line before re-raising, matching the
+embedded companion's diagnostics.
+
+**Finding 2 — a fresh session executed the stale companion before updating it.**
+When nothing was loaded yet, the embedded bootstrap compared `head` to
+`origin/dev`, then trusted and executed the on-disk
+`tools/max_pull_and_load.py` **before** pulling. A fresh Max session could
+therefore run the old companion one last time. `_existing_result` now
+fast-forwards (`git pull --ff-only origin dev`) when `loaded is None`, the alias
+is not loaded, and `head != remote` after ancestry and clean-tree checks; it
+verifies `after_head == remote`, recomputes `_companion_digests(after_head)`, and
+returns `action = "clone"` so `first_clone_head_sha` is stamped and the updated
+on-disk companion executes. A loaded session still refuses with
+`restart_required` and never pulls.
+
+Regression coverage in `tests/test_pull_and_load.py` grew from 87 to **90**
+cases (3 added): a fake PySide6 whose `QObject.connect(self, sender, signal,
+receiver, slot, conn_type)` is called by `SignalInstance.connect` with five
+positional arguments (proving the relay never shadows it and the plain bridge
+still delivers), fresh-session fast-forward before companion execution, and the
+loaded-session no-pull refusal.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Launcher regression suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest max2025_menu_prototype.tests.test_pull_and_load -v` | **90 tests, OK** |
+| Portable suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest max2025_menu_prototype.tests.test_portable -v` | **25 tests, OK** |
+| Aggregate stdlib suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s max2025_menu_prototype/tests -p 'test_*.py' -v` | **402 tests, OK, 12 skipped** |
+| Python 3.11 AST + compile | `ast.parse(..., feature_version=(3, 11))` and `compile()` over all **43** prototype `*.py` files | **OK**, no bytecode written |
+| Whitespace | `git diff --check` | **OK** |
+| Protected baseline | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m max2025_menu_prototype.tools.baseline verify --manifest /tmp/opencode/max2025-menu-prototype-baseline.json` | **293 protected entries unchanged** |
+
+**Still NOT RUN for these fixes:** live 3ds Max 2025 Qt queued delivery after
+the relay split, a live fresh-session fast-forward from GitHub, and
+MAXScript/runtime execution. The bridge and pull paths are simulated in tests
+only.

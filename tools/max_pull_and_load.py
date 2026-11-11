@@ -216,6 +216,33 @@ def _emit(message: str) -> None:
     print(message, flush=True)
 
 
+def _exception_detail(exc: BaseException) -> str:
+    """Return a bounded, ASCII-clean ``<ExcType>: <reason>`` diagnostic.
+
+    Mirrors the embedded companion's exception sanitizer so an unexpected
+    non-``LauncherError`` failure on the main thread still leaves one useful
+    Listener line before it is re-raised.
+    """
+
+    try:
+        name = "".join(
+            ch for ch in type(exc).__name__
+            if ch.isascii() and (ch.isalnum() or ch == "_")
+        )[:48] or "Exception"
+    except Exception:
+        name = "Exception"
+    try:
+        text = str(exc)
+    except Exception:
+        text = ""
+    cleaned = "".join(
+        ch if ch.isascii() and ch.isprintable() and ch not in "\r\n\t" else " "
+        for ch in text
+    )
+    cleaned = " ".join(cleaned.split())[:160].rstrip()
+    return "%s: %s" % (name, cleaned) if cleaned else name
+
+
 def _assert_main_thread() -> None:
     if threading.current_thread() is not threading.main_thread():
         raise LauncherError(MAIN_THREAD_MESSAGE, "main_thread")
@@ -1050,12 +1077,19 @@ def _qt_bridge_factory() -> _SignalBridge:
     if application is None:
         raise LauncherError(NO_QT_MESSAGE, "no_qt")
 
-    class _Bridge(QtCore.QObject):
+    class _QtRelay(QtCore.QObject):
         completed = QtCore.Signal(object)
 
         # Keep these annotations off PySide6 slots: when this module is exec'd
         # from a plain namespace, PEP 563 string annotations make Shiboken
         # unable to resolve ``object``/``None`` during slot registration.
+        #
+        # Never define ``connect`` (or any other public QObject method) here.
+        # In PySide6 6.5.3 ``SignalInstance.connect`` forwards to
+        # ``QObject.connect(self, signal, receiver, slot, type)`` with five
+        # positional arguments; an override would collide with that internal
+        # call and raise ``TypeError: connect() takes 2 positional arguments
+        # but 5 were given``.
         def __init__(self):
             super().__init__()
             self._slots = []
@@ -1066,19 +1100,26 @@ def _qt_bridge_factory() -> _SignalBridge:
             for slot in list(self._slots):
                 slot(result)
 
+    class _Bridge(_SignalBridge):
+        """Plain-Python handle; must not shadow any ``QObject`` method."""
+
+        def __init__(self, relay):
+            # A strong reference keeps the QObject alive for the worker.
+            self._relay = relay
+
         def connect(self, slot):
-            self._slots.append(slot)
+            self._relay._slots.append(slot)
 
         def emit(self, result):
-            self.completed.emit(result)
+            self._relay.completed.emit(result)
 
-    module_name = _Bridge.__module__
+    module_name = _QtRelay.__module__
     if module_name not in sys.modules:
         sys.modules[module_name] = types.ModuleType(module_name)
 
-    bridge = _Bridge()
-    bridge.moveToThread(application.thread())
-    return bridge
+    relay = _QtRelay()
+    relay.moveToThread(application.thread())
+    return _Bridge(relay)
 
 
 def _thread_worker_factory(
@@ -1205,6 +1246,18 @@ def _enter_restart_required(session: types.ModuleType, message: str) -> None:
     _emit(message)
 
 
+def _show_tools_checked(bootstrap: Any) -> None:
+    """Show the panel, printing one bounded diagnostic for unexpected errors."""
+
+    try:
+        bootstrap.show_tools()
+    except LauncherError:
+        raise
+    except Exception as exc:
+        _emit(_exception_detail(exc))
+        raise
+
+
 def _on_git_finished(result: dict[str, Any], checkout: Path) -> None:
     """Queued main-thread completion: import/show or stop without retrying."""
 
@@ -1245,7 +1298,7 @@ def _on_git_finished(result: dict[str, Any], checkout: Path) -> None:
         if bootstrap is None:
             _enter_restart_required(session, STALE_IMPORT_MESSAGE)
             raise LauncherError(STALE_IMPORT_MESSAGE, "stale_import")
-        bootstrap.show_tools()
+        _show_tools_checked(bootstrap)
         _emit("Loaded commit %s." % sha)
         _emit_listener_tip()
         return
@@ -1254,14 +1307,20 @@ def _on_git_finished(result: dict[str, Any], checkout: Path) -> None:
         _emit(GIT_FAILED_MESSAGE)
         raise LauncherError(GIT_FAILED_MESSAGE, "git_failed")
 
-    package = load_checkout_package(checkout, sha)
+    try:
+        package = load_checkout_package(checkout, sha)
+    except LauncherError:
+        raise
+    except Exception as exc:
+        _emit(_exception_detail(exc))
+        raise
     bootstrap = getattr(session, "bootstrap", None) or sys.modules.get(
         PACKAGE_NAME + ".max_host.bootstrap"
     )
     if bootstrap is None:
         _enter_restart_required(session, STALE_IMPORT_MESSAGE)
         raise LauncherError(STALE_IMPORT_MESSAGE, "stale_import")
-    bootstrap.show_tools()
+    _show_tools_checked(bootstrap)
     _emit("Loaded commit %s from %s." % (sha, Path(package.__file__).parent))
     _emit_listener_tip()
 
@@ -1814,6 +1873,15 @@ def _fetch_origin_dev():
         raise _GitFailure(message, category)
 
 
+def _pull_ff_only():
+    code, stdout, stderr = _run_git(
+        ["pull", "--ff-only", "origin", BRANCH], CHECKOUT, NETWORK_GIT_TIMEOUT
+    )
+    if code != 0:
+        message, category = _classify(stderr, stdout)
+        raise _GitFailure(message, category)
+
+
 def _remote_dev_sha():
     value = _git_stdout(
         ["rev-parse", "--verify", "refs/remotes/origin/dev"], CHECKOUT
@@ -1896,6 +1964,26 @@ def _existing_result():
         raise _GitFailure(DIVERGED_MESSAGE, "diverged")
     if loaded is not None and remote != loaded:
         raise _GitFailure(RESTART_MESSAGE, "restart_required")
+    if loaded is None and not _alias_loaded() and head != remote:
+        # A fresh Max session with nothing loaded yet: fast-forward before
+        # trusting the on-disk companion, so the committed companion at
+        # ``remote`` (not the stale one at ``head``) is what executes.  The
+        # clean-tree and ancestry checks above already ran, so this cannot
+        # discard local work.
+        _pull_ff_only()
+        after = _head()
+        if after != remote:
+            raise _GitFailure(
+                "The checkout changed during the fast-forward pull. No retry "
+                "was attempted.",
+                "checkout_changed",
+            )
+        head = after
+        exact, normalized = _companion_digests(head)
+        return {"ok": True, "action": "clone", "head": head, "remote_sha": remote,
+                "companion_sha256": exact,
+                "companion_normalized_sha256": normalized,
+                "message": "Updated checkout to commit %s." % head}
     exact, normalized = _companion_digests(head)
     return {"ok": True, "action": "existing", "head": head, "remote_sha": remote,
             "companion_sha256": exact, "companion_normalized_sha256": normalized,
