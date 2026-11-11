@@ -774,3 +774,53 @@ The 13 skips remain optional PySide6-only tests (`No module named 'PySide6'`).
 No assertion was deleted or skipped to obtain green. **Still NOT RUN:** live Max
 2025 caddy dialogs, `PreviewOn()` transitions, native conversion/collapse and
 undo restoration; all four fixes are proven with fake-runtime tests only.
+
+## Fix Cycle 2: owned hold, caddy preview identity, primitive rollback and fresh base (2026-11-11)
+
+**Scope:** the four High findings from the re-review of the Fix Cycle 1 commit.
+
+- **Owned undo hold.** A real `with pymxs.undo(True, label):` sets
+  `theHold.Holding() == True` inside the block. `_verify_scene_guard` now
+  accepts `allow_owned_hold=True` only inside the owned chunk, where it still
+  rejects `RestoreOrRedoing()` but never the transaction's own hold. Foreign
+  holds and restore/redo states are checked after the Modify-panel switch and
+  before the chunk opens; a pre-existing hold is refused with no `convertTo` or
+  `collapseStack`. The fake undo factory now raises `Holding()` for the block
+  duration, so conversion and collapse success tests exercise the real shape.
+- **Caddy preview identity.** `PreviewGetDragging` is queried first and
+  `PreviewDragging` is only a fallback. The adapter records the launching node
+  and its anim handle, re-queries that original node (or
+  `maxOps.getNodeByHandle`) on every snapshot, and does not clear the block
+  merely because the palette target changed. The block clears only when the
+  original node proves `PreviewOn() == False` and dragging `False`, or the node
+  is proven deleted. Any present preview member that raises or returns an
+  unreadable value fails closed.
+- **Primitive rollback state.** Non-Editable-Poly targets capture the base
+  class and handle, node transform, modifier-stack signature, and either a
+  readable base-property snapshot or `getPolygonCount(node)` before any native
+  mutation. If none is capturable, preparation is refused before mutation. A
+  failed chunk must match all captured state, including the original primitive
+  class and property/count snapshot, or `rollback_unverified` latches V2
+  mutations off.
+- **Fresh base re-read.** `_verify_scene_guard` always re-reads
+  `fresh_base = _base_object(node)` and compares its handle and class, so a
+  cached assessment base can no longer validate itself.
+
+Regression coverage grew the focused V2 suites from 71 to **78** cases, adding
+owned-hold success, foreign-hold refusal, `PreviewGetDragging` precedence and
+fallback, target-change/delete caddy latching, unreadable dragging, primitive
+state capture refusal, primitive rollback mismatch, and base/transform drift.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Focused V2 suites | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest max2025_menu_prototype.tests.test_preparation max2025_menu_prototype.tests.test_maneuver_host` | **78 tests, OK** |
+| Aggregate stdlib suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s max2025_menu_prototype/tests -p 'test_*.py'` | **653 tests, OK, 13 skipped** |
+| Literal checkout regression | `test_v2_checkout.LiteralCheckoutTests.test_full_suite_from_literal_3dsmodeler_checkout` | **1 test, OK** |
+| Python 3.11 syntax | `ast.parse(..., feature_version=(3, 11))` + `compile()` over all **64** prototype `*.py` files | **OK**, no bytecode written |
+| Deterministic portable ZIP | two fresh `tools/portable.py` builds into a new external directory | **identical bytes**, **81 members**, SHA-256 `ec1b25f7eb865453cbbc4d147c7f1dfe365d5dd50821556a3a181b307c470d78` |
+| Whitespace | `git diff --check` | **OK** |
+
+The 13 skips remain optional PySide6-only tests (`No module named 'PySide6'`).
+**Still NOT RUN:** live Max 2025 `pymxs.undo` hold behavior, caddy preview
+methods and node deletion, primitive conversion/collapse restoration, and
+`maxOps.getNodeByHandle`; all four fixes are proven with fake-runtime tests only.

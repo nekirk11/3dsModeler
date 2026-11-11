@@ -246,6 +246,24 @@ class BooleanMaskBitArray:
         return len(self.flags)
 
 
+class OwnedHoldUndoFactory(FakeUndoFactory):
+    """Fake ``pymxs.undo`` that sets ``theHold.Holding()`` inside the block."""
+
+    def __init__(self, runtime, restore=None, suppress: bool = False) -> None:
+        super().__init__(restore=restore, suppress=suppress)
+        self.runtime = runtime
+        self._previous = False
+
+    def __enter__(self):
+        self._previous = bool(self.runtime.theHold.holding)
+        self.runtime.theHold.holding = True
+        return super().__enter__()
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.runtime.theHold.holding = self._previous
+        return super().__exit__(exc_type, exc, traceback)
+
+
 class MutatingFailingConvertRuntime(V2Runtime):
     """Fails conversion after mutating geometry, with no restore callback."""
 
@@ -481,7 +499,7 @@ class CaddyExecutionTests(unittest.TestCase):
         self.assertTrue(adapter._caddy_active)
 
         node.EditablePoly.PreviewOn = lambda: True
-        node.EditablePoly.PreviewDragging = lambda: True
+        node.EditablePoly.PreviewGetDragging = lambda: True
         active_snapshot = adapter.snapshot()
         self.assertEqual(adapter._last_assessment.preview_state, "on")
         self.assertIs(adapter._last_assessment.preview_dragging, True)
@@ -492,6 +510,7 @@ class CaddyExecutionTests(unittest.TestCase):
         self.assertEqual(node.EditablePoly.popups, ["Chamfer"])
 
         node.EditablePoly.PreviewOn = lambda: False
+        node.EditablePoly.PreviewGetDragging = lambda: False
         cleared_snapshot = adapter.snapshot()
         self.assertFalse(cleared_snapshot.caddy_active)
         self.assertFalse(adapter._caddy_active)
@@ -516,6 +535,83 @@ class CaddyExecutionTests(unittest.TestCase):
         still_blocked = adapter.execute(request(adapter, "bevel"))
         self.assertEqual(still_blocked.status, "blocked")
         self.assertIn("caddy", still_blocked.message.lower())
+
+    def test_preview_dragging_secondary_spelling_is_read(self):
+        adapter, runtime, node, undo = v2_setup(level=2, edges=(1,))
+        adapter._atlas = self._bevel_atlas()
+        node.EditablePoly.PreviewOn = lambda: False
+        node.EditablePoly.PreviewDragging = lambda: True
+        snapshot = adapter.snapshot()
+        self.assertEqual(adapter._last_assessment.preview_state, "on")
+        self.assertIs(adapter._last_assessment.preview_dragging, True)
+        self.assertTrue(snapshot.caddy_active)
+
+    def test_target_change_keeps_block_until_original_caddy_closes(self):
+        adapter, runtime, node, undo = v2_setup(level=2, edges=(1,))
+        adapter._atlas = self._bevel_atlas()
+        launched = adapter.execute(request(adapter, "bevel"))
+        self.assertEqual(launched.status, "launched", launched.message)
+        node.EditablePoly.PreviewOn = lambda: True
+        node.EditablePoly.PreviewGetDragging = lambda: False
+        self.assertTrue(adapter.snapshot().caddy_active)
+
+        other = V2Node("OtherV2", class_name="Editable_Poly", handle=302)
+        other.baseObject = FakeBaseObject("Editable_Poly", handle=702)
+        other.mesh.selections[ContextLevel.EDGE].add(1)
+        other.mesh.current_level = ContextLevel.EDGE
+        runtime.selection = [other]
+        runtime.subObjectLevel = 2
+        runtime.modPanel.current = other.baseObject
+
+        moved = adapter.snapshot()
+        self.assertTrue(moved.caddy_active)
+        self.assertFalse(adapter.availability("bevel", moved).enabled)
+
+        node.EditablePoly.PreviewOn = lambda: False
+        node.EditablePoly.PreviewGetDragging = lambda: False
+        closed = adapter.snapshot()
+        self.assertFalse(closed.caddy_active)
+
+    def test_deleted_caddy_node_clears_only_with_handle_proof(self):
+        adapter, runtime, node, undo = v2_setup(level=2, edges=(1,))
+        adapter._atlas = self._bevel_atlas()
+        launched = adapter.execute(request(adapter, "bevel"))
+        self.assertEqual(launched.status, "launched", launched.message)
+        node.EditablePoly.PreviewOn = lambda: True
+        node.EditablePoly.PreviewGetDragging = lambda: False
+
+        class MaxOps:
+            deleted = False
+
+            def getNodeByHandle(self, handle):
+                return None if self.deleted else node
+
+        runtime.maxOps = MaxOps()
+        other = V2Node("OtherV2", class_name="Editable_Poly", handle=303)
+        other.baseObject = FakeBaseObject("Editable_Poly", handle=703)
+        other.mesh.selections[ContextLevel.EDGE].add(1)
+        other.mesh.current_level = ContextLevel.EDGE
+        runtime.selection = [other]
+        runtime.subObjectLevel = 2
+        runtime.modPanel.current = other.baseObject
+
+        self.assertTrue(adapter.snapshot().caddy_active)
+        runtime.maxOps.deleted = True
+        self.assertFalse(adapter.snapshot().caddy_active)
+
+    def test_unreadable_dragging_fails_closed(self):
+        adapter, runtime, node, undo = v2_setup(level=2, edges=(1,))
+        adapter._atlas = self._bevel_atlas()
+        node.EditablePoly.PreviewOn = lambda: False
+
+        def unreadable():
+            raise RuntimeError("PreviewGetDragging unavailable")
+
+        node.EditablePoly.PreviewGetDragging = unreadable
+        snapshot = adapter.snapshot()
+        self.assertEqual(adapter._last_assessment.preview_state, "unknown")
+        self.assertTrue(snapshot.caddy_active)
+        self.assertFalse(adapter.availability("bevel", snapshot).enabled)
 
 
 class CommandModeExecutionTests(unittest.TestCase):
@@ -810,9 +906,10 @@ class GuardTests(unittest.TestCase):
                 self.mesh.faces.pop()
                 raise RuntimeError("native failure")
 
-        undo = FakeUndoFactory(restore=None)
+        runtime = V2Runtime()
+        undo = OwnedHoldUndoFactory(runtime, restore=None)
         adapter, runtime, node, undo = v2_setup(
-            level=2, edges=(1,), undo=undo
+            level=2, edges=(1,), runtime=runtime, undo=undo
         )
         node.EditablePoly = RaisingPoly(node.mesh)
         adapter._atlas = atlas(
@@ -837,7 +934,7 @@ class GuardTests(unittest.TestCase):
             edges=(1,),
             base_class="Box",
             runtime=convert_runtime,
-            undo=FakeUndoFactory(restore=None),
+            undo=OwnedHoldUndoFactory(convert_runtime, restore=None),
         )
         convert_adapter._atlas = self._caddy_atlas()
         conversion = convert_adapter.execute(request(convert_adapter, "bevel"))
@@ -854,7 +951,7 @@ class GuardTests(unittest.TestCase):
             level=0,
             modifiers=(FakeModifier("TurboSmooth", handle=930),),
             runtime=collapse_runtime,
-            undo=FakeUndoFactory(restore=None),
+            undo=OwnedHoldUndoFactory(collapse_runtime, restore=None),
         )
         collapse_adapter._atlas = atlas(
             spec(

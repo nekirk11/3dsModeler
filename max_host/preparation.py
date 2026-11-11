@@ -389,34 +389,65 @@ def _editable_poly_interface(node: Any) -> Any:
 PREVIEW_STATES: Tuple[str, ...] = ("on", "off", "absent", "unknown")
 
 
+def _preview_flag(ep: Any, names: Sequence[str]) -> Tuple[bool, Optional[bool]]:
+    """Return ``(present, value)`` for the first documented preview flag.
+
+    ``present`` is False only when every candidate is genuinely absent
+    (``AttributeError``/``None`` on a minimal fake).  A present but
+    non-callable, raising, or non-Boolean/non-integer member yields
+    ``(True, None)`` so the caller can fail closed.
+    """
+
+    for name in names:
+        try:
+            reader = getattr(ep, name)
+        except AttributeError:
+            continue
+        except Exception:
+            return True, None
+        if reader is None:
+            continue
+        if not callable(reader):
+            return True, None
+        try:
+            value = _documented_flag(reader())
+        except Exception:
+            return True, None
+        if value is None:
+            return True, None
+        return True, value
+    return False, None
+
+
 def read_ep_preview(ep: Any) -> Tuple[str, Optional[bool]]:
-    """Read ``EditablePoly.PreviewOn()``/``PreviewDragging()`` read-only.
+    """Read ``EditablePoly.PreviewOn()``/``PreviewGetDragging()`` read-only.
 
     Returns ``(state, dragging)`` where ``state`` is ``on``, ``off``,
-    ``absent`` (no ``PreviewOn`` member), or ``unknown`` (the member raised or
-    returned a non-Boolean/non-integer value).  The live preview belongs to the
-    native caddy, so an unreadable state after a caddy launch fails closed.
+    ``absent`` (no ``PreviewOn`` member), or ``unknown`` (a present member
+    raised or returned a non-Boolean/non-integer value).  The live preview
+    belongs to the native caddy, so an unreadable present member fails closed.
+    ``PreviewGetDragging`` is the documented method; ``PreviewDragging`` is
+    accepted only as a backward-compatible secondary spelling.
     """
 
     if ep is None or _is_undefined(ep):
         return "absent", None
-    reader = getattr(ep, "PreviewOn", None)
-    if not callable(reader):
-        return "absent", None
-    try:
-        flag = _documented_flag(reader())
-    except Exception:
+    on_present, on_value = _preview_flag(ep, ("PreviewOn",))
+    drag_present, drag_value = _preview_flag(
+        ep, ("PreviewGetDragging", "PreviewDragging")
+    )
+    dragging = drag_value if drag_present else None
+    if not on_present:
+        if drag_present and drag_value is True:
+            return "on", True
+        if drag_present and drag_value is None:
+            return "unknown", None
+        return "absent", dragging
+    if on_value is None:
+        return "unknown", dragging
+    if drag_present and drag_value is None:
         return "unknown", None
-    if flag is None:
-        return "unknown", None
-    dragging: Optional[bool] = None
-    drag_reader = getattr(ep, "PreviewDragging", None)
-    if callable(drag_reader):
-        try:
-            dragging = _documented_flag(drag_reader())
-        except Exception:
-            dragging = None
-    return ("on" if flag else "off"), dragging
+    return ("on" if (on_value or dragging) else "off"), dragging
 
 
 def _dependent_nodes(runtime: Any, base: Any) -> Optional[List[Any]]:
@@ -584,6 +615,19 @@ def _time_token(runtime: Any) -> str:
         return "unreadable"
 
 
+def _transform_token(node: Any) -> str:
+    try:
+        value = getattr(node, "transform", None)
+    except Exception:
+        return "unreadable"
+    if value is None or _is_undefined(value):
+        return "unreadable"
+    try:
+        return str(value)
+    except Exception:
+        return "unreadable"
+
+
 @dataclass(frozen=True)
 class _SceneGuard:
     """Read-only scene identity captured before a panel or stack mutation."""
@@ -593,6 +637,7 @@ class _SceneGuard:
     base: Optional[str]
     base_class: str
     stack: Tuple[Tuple[str, str, bool], ...]
+    transform: str
     current_time: str
     hold: Tuple[bool, bool, bool]
 
@@ -603,25 +648,35 @@ def _selection_handles(runtime: Any) -> Tuple[Optional[str], ...]:
     )
 
 
-def _capture_scene_guard(
-    runtime: Any, node: Any, base: Any = None
-) -> _SceneGuard:
-    current_base = base if base is not None else _base_object(node)
+def _capture_scene_guard(runtime: Any, node: Any) -> _SceneGuard:
+    current_base = _base_object(node)
     return _SceneGuard(
         selected=_selection_handles(runtime),
         node=_stable_handle(runtime, node),
         base=_stable_handle(runtime, current_base),
         base_class=_class_name(runtime, current_base) if current_base is not None else "none",
         stack=stack_identity(runtime, node),
+        transform=_transform_token(node),
         current_time=_time_token(runtime),
         hold=hold_flags(runtime),
     )
 
 
 def _verify_scene_guard(
-    runtime: Any, guard: Any, node: Any, base: Any = None
+    runtime: Any,
+    guard: Any,
+    node: Any,
+    *,
+    allow_owned_hold: bool = False,
 ) -> str:
-    """Return a drift reason, or ``""`` when the captured scene is unchanged."""
+    """Return a drift reason, or ``""`` when the captured scene is unchanged.
+
+    The base object is always re-read from the node; a caller-supplied cached
+    base could otherwise compare the captured base against itself.  Inside an
+    owned ``pymxs.undo`` chunk ``theHold.Holding()`` is legitimately True, so
+    only ``allow_owned_hold=True`` skips that single check (still rejecting any
+    ``RestoreOrRedoing()``).
+    """
 
     if not isinstance(guard, _SceneGuard):
         return "The preparation guard state is unavailable."
@@ -629,25 +684,42 @@ def _verify_scene_guard(
         return "The object selection changed while the Modify panel was opening."
     if _stable_handle(runtime, node) != guard.node:
         return "The selected node changed while the Modify panel was opening."
-    current_base = base if base is not None else _base_object(node)
-    if _stable_handle(runtime, current_base) != guard.base:
+    fresh_base = _base_object(node)
+    if _stable_handle(runtime, fresh_base) != guard.base:
         return "The target base object changed while the Modify panel was opening."
     if (
-        _class_name(runtime, current_base) if current_base is not None else "none"
+        _class_name(runtime, fresh_base) if fresh_base is not None else "none"
     ) != guard.base_class:
         return "The target base object class changed while the Modify panel was opening."
     if stack_identity(runtime, node) != guard.stack:
         return "The modifier stack changed while the Modify panel was opening."
+    if _transform_token(node) != guard.transform:
+        return "The target transform changed while the Modify panel was opening."
     if _time_token(runtime) != guard.current_time:
         return "The scene time changed while the Modify panel was opening."
     holding, restoring, readable = hold_flags(runtime)
     if not readable:
         return "Undo/redo state could not be re-verified after the panel switch."
-    if holding or restoring:
+    if restoring:
         return HOLD_REASON
-    if (holding, restoring, readable) != guard.hold:
+    if holding and not allow_owned_hold:
+        return HOLD_REASON
+    if not allow_owned_hold and (holding, restoring, readable) != guard.hold:
         return "Undo/redo state changed while the Modify panel was opening."
     return ""
+
+
+@dataclass(frozen=True)
+class _PrimitiveSnapshot:
+    """Verifiable pre-mutation state for a non-Editable-Poly target."""
+
+    base_class: str
+    base_handle: Optional[str]
+    stack: Tuple[Tuple[str, str, bool], ...]
+    transform: str
+    settings_token: str
+    settings_readable: bool
+    polygon_count: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -656,6 +728,76 @@ class _PreparationState:
 
     guard: _SceneGuard
     geometry: Optional[GeometryInfo]
+    primitive: Optional[_PrimitiveSnapshot] = None
+    capture_problem: str = ""
+
+
+def _polygon_count_token(runtime: Any, node: Any) -> Optional[str]:
+    getter = getattr(runtime, "getPolygonCount", None)
+    if not callable(getter):
+        return None
+    try:
+        value = getter(node)
+    except Exception:
+        return None
+    if value is None or _is_undefined(value):
+        return None
+    try:
+        items = list(value)
+    except TypeError:
+        try:
+            return str(value)
+        except Exception:
+            return None
+    except Exception:
+        return None
+    if not items:
+        return None
+    parts = []
+    for item in items:
+        try:
+            parts.append(str(int(item)))
+        except Exception:
+            return None
+    return ",".join(parts)
+
+
+def _capture_primitive_snapshot(
+    runtime: Any, node: Any
+) -> Tuple[Optional[_PrimitiveSnapshot], str]:
+    """Capture primitive state, or return why preparation must refuse."""
+
+    base = _base_object(node)
+    if base is None:
+        return None, "The primitive base object could not be read."
+    base_class = _class_name(runtime, base)
+    if base_class in ("unknown", "none", ""):
+        return None, "The primitive base object class could not be verified."
+    base_handle = _stable_handle(runtime, base)
+    if base_handle is None:
+        return None, "The primitive base object identity could not be verified."
+    transform = _transform_token(node)
+    if transform == "unreadable":
+        return None, "The target transform could not be read before conversion."
+    settings_token, settings_readable = read_settings(node)
+    polygon_count = _polygon_count_token(runtime, node)
+    if not settings_readable and polygon_count is None:
+        return None, (
+            "The primitive state could not be captured before conversion; "
+            "rollback could not be verified."
+        )
+    return (
+        _PrimitiveSnapshot(
+            base_class=base_class,
+            base_handle=base_handle,
+            stack=stack_identity(runtime, node),
+            transform=transform,
+            settings_token=settings_token,
+            settings_readable=settings_readable,
+            polygon_count=polygon_count,
+        ),
+        "",
+    )
 
 
 def _capture_preparation_state(runtime: Any, node: Any) -> _PreparationState:
@@ -664,20 +806,41 @@ def _capture_preparation_state(runtime: Any, node: Any) -> _PreparationState:
         geometry: Optional[GeometryInfo] = read_geometry(runtime, node)
     except Exception:
         geometry = None
-    return _PreparationState(guard=guard, geometry=geometry)
+    primitive = None
+    problem = ""
+    base = _base_object(node)
+    is_poly = base is not None and _class_is(runtime, base, "Editable_Poly")
+    if not is_poly:
+        primitive, problem = _capture_primitive_snapshot(runtime, node)
+    return _PreparationState(
+        guard=guard,
+        geometry=geometry,
+        primitive=primitive,
+        capture_problem=problem,
+    )
 
 
 def _restoration_problem(
-    runtime: Any, state: Any, node: Any, base: Any = None
+    runtime: Any, state: Any, node: Any
 ) -> str:
     """Return why rollback is unverified, or ``""`` when state matches."""
 
     if not isinstance(state, _PreparationState):
         return "the pre-preparation state was not captured"
-    problem = _verify_scene_guard(runtime, state.guard, node, base)
+    if state.capture_problem:
+        return state.capture_problem
+    problem = _verify_scene_guard(runtime, state.guard, node)
     if problem:
         return problem
+    if state.primitive is not None:
+        fresh, capture_problem = _capture_primitive_snapshot(runtime, node)
+        if fresh is None:
+            return capture_problem or "the primitive state could not be re-read"
+        if fresh != state.primitive:
+            return "primitive base/transform/settings/counts were not restored"
     if state.geometry is None:
+        if state.primitive is None:
+            return "no verifiable geometry or primitive state was captured"
         return ""
     try:
         after = read_geometry(runtime, node)
@@ -1238,12 +1401,10 @@ def _set_current_base(runtime: Any, node: Any, base: Any) -> None:
 def _prepare_ready(
     runtime: Any, assessment: TargetAssessment, undo_factory: Any = None
 ) -> PreparedTarget:
-    guard = _capture_scene_guard(runtime, assessment.node, assessment.base)
+    guard = _capture_scene_guard(runtime, assessment.node)
     try:
         _ensure_modify_panel(runtime)
-        drift = _verify_scene_guard(
-            runtime, guard, assessment.node, assessment.base
-        )
+        drift = _verify_scene_guard(runtime, guard, assessment.node)
         if drift:
             raise PreparationError(drift)
         _set_current_base(runtime, assessment.node, assessment.base)
@@ -1272,12 +1433,10 @@ def _prepare_base_with_modifiers(
             reason=SHOW_END_RESULT_REASON,
         )
     changed = not previous
-    guard = _capture_scene_guard(runtime, assessment.node, assessment.base)
+    guard = _capture_scene_guard(runtime, assessment.node)
     try:
         _ensure_modify_panel(runtime)
-        drift = _verify_scene_guard(
-            runtime, guard, assessment.node, assessment.base
-        )
+        drift = _verify_scene_guard(runtime, guard, assessment.node)
         if drift:
             raise PreparationError(drift)
         _set_current_base(runtime, assessment.node, assessment.base)
@@ -1327,6 +1486,13 @@ def _prepare_convert(
             reason="Editable Poly conversion is unavailable in this host.",
         )
     pre_state = _capture_preparation_state(runtime, node)
+    if pre_state.capture_problem:
+        return PreparedTarget(
+            ok=False,
+            status="blocked",
+            tier="convert",
+            reason=pre_state.capture_problem,
+        )
     try:
         _ensure_modify_panel(runtime)
     except PreparationError as exc:
@@ -1338,9 +1504,16 @@ def _prepare_convert(
         return PreparedTarget(
             ok=False, status="error", tier="convert", reason=drift
         )
+    hold_problem = _current_hold_reason(runtime)
+    if hold_problem:
+        return PreparedTarget(
+            ok=False, status="error", tier="convert", reason=hold_problem
+        )
 
     def edit() -> _PrepOutcome:
-        drift = _verify_scene_guard(runtime, pre_state.guard, node)
+        drift = _verify_scene_guard(
+            runtime, pre_state.guard, node, allow_owned_hold=True
+        )
         if drift:
             raise PreparationError(drift)
         converter(node, convert_target)
@@ -1634,9 +1807,18 @@ def collapse_to_poly(
 
     stack_before = stack_identity(runtime, node)
     pre_state = _capture_preparation_state(runtime, node)
+    if pre_state.capture_problem:
+        return PreparedTarget(
+            ok=False,
+            status="blocked",
+            tier="blocked",
+            reason=pre_state.capture_problem,
+        )
 
     def edit() -> _PrepOutcome:
-        drift = _verify_scene_guard(runtime, pre_state.guard, node)
+        drift = _verify_scene_guard(
+            runtime, pre_state.guard, node, allow_owned_hold=True
+        )
         if drift:
             raise PreparationError(drift)
         if command_name == "convertTo":
@@ -1669,6 +1851,11 @@ def collapse_to_poly(
     if drift:
         return PreparedTarget(
             ok=False, status="error", tier="blocked", reason=drift
+        )
+    hold_problem = _current_hold_reason(runtime)
+    if hold_problem:
+        return PreparedTarget(
+            ok=False, status="error", tier="blocked", reason=hold_problem
         )
     outcome = run_undoable(
         "3dsModeler V2: collapse to Editable Poly",
@@ -1780,8 +1967,8 @@ def switch_prepared_context(
         )
 
     previous_level = prepared.raw_level
-    guard = _capture_scene_guard(runtime, prepared.node, prepared.base)
-    drift = _verify_scene_guard(runtime, guard, prepared.node, prepared.base)
+    guard = _capture_scene_guard(runtime, prepared.node)
+    drift = _verify_scene_guard(runtime, guard, prepared.node)
     if drift:
         return SwitchOutcome(
             False,
@@ -1807,7 +1994,7 @@ def switch_prepared_context(
                 raw_level=previous_level,
             )
         converted = True
-        drift = _verify_scene_guard(runtime, guard, prepared.node, prepared.base)
+        drift = _verify_scene_guard(runtime, guard, prepared.node)
         if drift:
             return SwitchOutcome(
                 False,

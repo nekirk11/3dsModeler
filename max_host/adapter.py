@@ -66,6 +66,7 @@ from .preparation import (
     make_context,
     pivot_open_edges_to_border,
     prepare_target,
+    read_ep_preview,
     switch_prepared_context,
 )
 from .transactions import hold_flags, hold_state
@@ -260,6 +261,28 @@ def _stable_handle(runtime: Any, value: Any) -> Optional[str]:
         text = str(handle).strip()
         if text and text.lower() != "undefined":
             return "h:%s" % text
+    return None
+
+
+def _raw_handle(runtime: Any, value: Any) -> Optional[int]:
+    """Return the numeric anim handle used by ``maxOps.getNodeByHandle``."""
+
+    if value is None:
+        return None
+    for getter in (
+        lambda: runtime.getHandleByAnim(value),
+        lambda: getattr(value, "handle"),
+    ):
+        try:
+            handle = getter()
+        except Exception:
+            continue
+        if handle is None or _is_undefined(handle) or isinstance(handle, bool):
+            continue
+        try:
+            return int(handle)
+        except (TypeError, ValueError):
+            continue
     return None
 
 
@@ -1640,6 +1663,8 @@ class ManeuverHostAdapter:
         self._ambiguous_mode = False
         self._caddy_active = False
         self._caddy_target_token: Optional[str] = None
+        self._caddy_target_node: Any = None
+        self._caddy_target_handle: Optional[int] = None
         self._last_snapshot: Any = None
         self._last_assessment: Optional[TargetAssessment] = None
         self._last_maneuver_snapshot: Any = None
@@ -1716,8 +1741,12 @@ class ManeuverHostAdapter:
         ep_mode = "none"
         if assessment.ep is not None:
             ep_mode, _readable = maneuver_dispatch.read_ep_mode(runtime, assessment.ep)
-        preview_active = assessment.preview_state == "on"
-        caddy_active = bool(self._caddy_active or preview_active)
+        preview_active = assessment.preview_state in ("on", "unknown")
+        caddy_active = bool(
+            self._caddy_active
+            or preview_active
+            or assessment.preview_dragging is True
+        )
         mode_token = _digest(
             "mode",
             tool_mode,
@@ -1782,32 +1811,80 @@ class ManeuverHostAdapter:
             safety_token=safety,
         )
 
-    def _refresh_caddy_state(self, assessment: TargetAssessment) -> None:
-        """Track the native caddy preview without assuming it is gone.
+    def _clear_caddy(self) -> None:
+        self._caddy_active = False
+        self._caddy_target_token = None
+        self._caddy_target_node = None
+        self._caddy_target_handle = None
 
-        ``PreviewOn() == False`` is the only positive proof that the native
-        dialog released its preview; a clean target change also releases the
-        block.  An absent or unreadable ``PreviewOn()`` after a launch stays
-        latched so an open caddy can never authorize another mutation.
+    def _lookup_node_by_handle(
+        self, runtime: Any, handle: Optional[int]
+    ) -> Tuple[str, Any]:
+        """Return ``(status, node)`` without assuming the caddy node survives."""
+
+        if handle is None:
+            return "unavailable", None
+        max_ops = getattr(runtime, "maxOps", None)
+        getter = getattr(max_ops, "getNodeByHandle", None)
+        if not callable(getter):
+            return "unavailable", None
+        try:
+            found = getter(handle)
+        except Exception:
+            return "unavailable", None
+        if found is None or _is_undefined(found):
+            return "deleted", None
+        return "found", found
+
+    def _tracked_caddy_preview(self, runtime: Any) -> Tuple[str, Optional[bool]]:
+        """Re-query the original caddy node rather than the current target."""
+
+        node = self._caddy_target_node
+        handle = self._caddy_target_handle
+        if node is not None:
+            status, found = self._lookup_node_by_handle(runtime, handle)
+            if status == "deleted":
+                return "deleted", None
+            if status == "found":
+                node = found
+        elif handle is not None:
+            status, found = self._lookup_node_by_handle(runtime, handle)
+            if status == "deleted":
+                return "deleted", None
+            if status == "found":
+                node = found
+        if node is None:
+            return "unknown", None
+        try:
+            ep = getattr(node, "EditablePoly", None)
+        except Exception:
+            return "unknown", None
+        return read_ep_preview(ep)
+
+    def _refresh_caddy_state(self, runtime: Any) -> None:
+        """Release the native caddy block only on positive proof.
+
+        The tracked caddy's own node is re-queried even after the palette target
+        changes.  ``PreviewOn() == False`` plus ``PreviewGetDragging() == False``
+        (or a deleted node) is the only release proof; a changed target, an
+        absent method, or an unreadable preview keeps the block latched.
         """
 
         if not self._caddy_active:
             return
-        if assessment.preview_state == "off":
-            self._caddy_active = False
-            self._caddy_target_token = None
-            return
-        if (
-            self._caddy_target_token is not None
-            and assessment.node_token != self._caddy_target_token
-        ):
-            self._caddy_active = False
-            self._caddy_target_token = None
+        state, _dragging = self._tracked_caddy_preview(runtime)
+        if state in ("off", "deleted"):
+            self._clear_caddy()
 
     def _caddy_block_reason(self, assessment: Any = None) -> str:
         if self._caddy_active:
             return CADDY_ACTIVE_REASON
-        if assessment is not None and getattr(assessment, "preview_state", "") == "on":
+        if assessment is not None and getattr(assessment, "preview_state", "") in (
+            "on",
+            "unknown",
+        ):
+            return CADDY_ACTIVE_REASON
+        if assessment is not None and getattr(assessment, "preview_dragging", None) is True:
             return CADDY_ACTIVE_REASON
         return ""
 
@@ -1822,7 +1899,7 @@ class ManeuverHostAdapter:
         runtime = self._resolve_runtime()
         self._assert_main_thread()
         assessment = inspect_target(runtime)
-        self._refresh_caddy_state(assessment)
+        self._refresh_caddy_state(runtime)
         snapshot = self._build_snapshot(runtime, assessment)
         self._last_assessment = assessment
         self._last_snapshot = snapshot
@@ -2411,6 +2488,10 @@ class ManeuverHostAdapter:
         if routed_kind == "caddy" and outcome.status in ("launched", "applied"):
             self._caddy_active = True
             self._caddy_target_token = destination_assessment.node_token
+            self._caddy_target_node = destination_assessment.node
+            self._caddy_target_handle = _raw_handle(
+                runtime, destination_assessment.node
+            )
         if outcome.status == "applied":
             self._refresh_presentation(runtime)
         return LaunchResult(

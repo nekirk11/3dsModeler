@@ -22,6 +22,7 @@ from max2025_menu_prototype.max_host.preparation import (
 try:
     from .test_maneuver_host import (
         BooleanMaskBitArray,
+        FakeBaseObject,
         FakeModifier,
         FakeUndoFactory,
         V2Runtime,
@@ -30,6 +31,7 @@ try:
 except ImportError:  # discovered as a top-level test module
     from test_maneuver_host import (
         BooleanMaskBitArray,
+        FakeBaseObject,
         FakeModifier,
         FakeUndoFactory,
         V2Runtime,
@@ -40,6 +42,24 @@ except ImportError:  # discovered as a top-level test module
 def assessment(runtime=None, **kwargs):
     adapter, runtime, node, undo = v2_setup(runtime=runtime, **kwargs)
     return inspect_target(runtime), runtime, node, undo
+
+
+class OwnedHoldUndoFactory(FakeUndoFactory):
+    """Fake ``pymxs.undo`` that sets ``theHold.Holding()`` inside the block."""
+
+    def __init__(self, runtime, restore=None, suppress: bool = False) -> None:
+        super().__init__(restore=restore, suppress=suppress)
+        self.runtime = runtime
+        self._previous = False
+
+    def __enter__(self):
+        self._previous = bool(self.runtime.theHold.holding)
+        self.runtime.theHold.holding = True
+        return super().__enter__()
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.runtime.theHold.holding = self._previous
+        return super().__exit__(exc_type, exc, traceback)
 
 
 class PanelDriftRuntime(V2Runtime):
@@ -167,8 +187,9 @@ class PreparationTests(unittest.TestCase):
 
     def test_primitive_conversion_is_one_undo_chunk_and_verified(self):
         runtime = V2Runtime()
+        undo = OwnedHoldUndoFactory(runtime)
         adapter, runtime, node, undo = v2_setup(
-            level=2, edges=(1,), base_class="Box", runtime=runtime
+            level=2, edges=(1,), base_class="Box", runtime=runtime, undo=undo
         )
         assessment_value = inspect_target(runtime)
         prepared = prepare_target(runtime, assessment_value, undo_factory=undo)
@@ -179,6 +200,7 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(runtime.v2_calls.count("convertTo"), 1)
         self.assertIsNotNone(prepared.ep)
         self.assertEqual(prepared.tier, "convert")
+        self.assertFalse(runtime.theHold.holding)
 
     def test_failed_conversion_reports_error_and_restores_via_undo(self):
         runtime = V2Runtime()
@@ -197,6 +219,62 @@ class PreparationTests(unittest.TestCase):
         self.assertFalse(prepared.converted)
         self.assertEqual(len(undo.calls), 1)
         self.assertEqual(undo.exited[0][1], RuntimeError)
+
+    def test_foreign_hold_after_panel_switch_blocks_before_native_mutation(self):
+        runtime = PanelDriftRuntime()
+        adapter, runtime, node, undo = v2_setup(
+            level=2, edges=(1,), base_class="Box", runtime=runtime
+        )
+        runtime.panel_callback = lambda rt: setattr(rt.theHold, "holding", True)
+        prepared = prepare_target(runtime, inspect_target(runtime), undo_factory=undo)
+        self.assertFalse(prepared.ok, prepared.reason)
+        self.assertNotIn("convertTo", runtime.v2_calls)
+        self.assertEqual(undo.calls, [])
+
+        modifier = FakeModifier("TurboSmooth", handle=962)
+        runtime = PanelDriftRuntime()
+        adapter, runtime, node, undo = v2_setup(
+            level=2, edges=(1,), modifiers=(modifier,), runtime=runtime
+        )
+        runtime.panel_callback = lambda rt: setattr(rt.theHold, "holding", True)
+        prepared = collapse_to_poly(
+            runtime, inspect_target(runtime), confirmed=True, undo_factory=undo
+        )
+        self.assertFalse(prepared.ok, prepared.reason)
+        self.assertNotIn("collapseStack", runtime.v2_calls)
+        self.assertEqual(undo.calls, [])
+
+    def test_primitive_preparation_refuses_without_capturable_state(self):
+        runtime = V2Runtime()
+        adapter, runtime, node, undo = v2_setup(
+            level=2, edges=(1,), base_class="Box", runtime=runtime
+        )
+        del node.baseObject.useSoftSel
+        prepared = prepare_target(runtime, inspect_target(runtime), undo_factory=undo)
+        self.assertFalse(prepared.ok, prepared.reason)
+        self.assertEqual(prepared.status, "blocked")
+        self.assertIn("primitive state could not be captured", prepared.reason)
+        self.assertNotIn("convertTo", runtime.v2_calls)
+        self.assertEqual(undo.calls, [])
+
+    def test_box_conversion_rollback_detects_unrestored_primitive_state(self):
+        class PrimitiveFailingRuntime(V2Runtime):
+            def convertTo(self, node_value, target):
+                self.v2_calls.append("convertTo")
+                node_value.baseObject.extrusionType = 99
+                raise RuntimeError("conversion failed after a property write")
+
+        runtime = PrimitiveFailingRuntime()
+        undo = OwnedHoldUndoFactory(runtime, restore=None)
+        adapter, runtime, node, undo = v2_setup(
+            level=2, edges=(1,), base_class="Box", runtime=runtime, undo=undo
+        )
+        prepared = prepare_target(runtime, inspect_target(runtime), undo_factory=undo)
+        self.assertFalse(prepared.ok, prepared.reason)
+        self.assertEqual(prepared.status, "error")
+        self.assertTrue(prepared.rollback_unverified)
+        self.assertIn("Rollback could not be verified", prepared.reason)
+        self.assertFalse(runtime.theHold.holding)
 
     def test_tier_two_sets_show_end_result_and_preserves_modifiers(self):
         modifier = FakeModifier("TurboSmooth", handle=913)
@@ -294,6 +372,20 @@ class PreparationTests(unittest.TestCase):
                     FakeModifier("TurboSmooth", handle=960)
                 ),
             ),
+            (
+                "base",
+                lambda rt: setattr(
+                    rt.selection[0],
+                    "baseObject",
+                    FakeBaseObject(
+                        rt.selection[0].baseObject.class_name, handle=970
+                    ),
+                ),
+            ),
+            (
+                "transform",
+                lambda rt: setattr(rt.selection[0], "transform", "matrix3-drift"),
+            ),
             ("time", lambda rt: setattr(rt, "currentTime", 42)),
         )
         for label, drift in drifts:
@@ -348,8 +440,9 @@ class CollapseTests(unittest.TestCase):
     def test_confirmed_collapse_bakes_stack_in_one_chunk(self):
         modifier = FakeModifier("TurboSmooth", handle=918)
         runtime = V2Runtime()
+        undo = OwnedHoldUndoFactory(runtime)
         adapter, runtime, node, undo = v2_setup(
-            level=2, edges=(1,), modifiers=(modifier,), runtime=runtime
+            level=2, edges=(1,), modifiers=(modifier,), runtime=runtime, undo=undo
         )
         prepared = collapse_to_poly(
             runtime, inspect_target(runtime), confirmed=True, undo_factory=undo
@@ -360,16 +453,19 @@ class CollapseTests(unittest.TestCase):
         self.assertEqual(node.collapse_calls, 1)
         self.assertEqual(len(undo.calls), 1)
         self.assertEqual(undo.calls[0][1], "3dsModeler V2: collapse to Editable Poly")
+        self.assertFalse(runtime.theHold.holding)
 
     def test_confirmed_collapse_converts_non_poly_with_modifiers(self):
         modifier = FakeModifier("TurboSmooth", handle=919)
         runtime = V2Runtime()
+        undo = OwnedHoldUndoFactory(runtime)
         adapter, runtime, node, undo = v2_setup(
             level=2,
             edges=(1,),
             base_class="Box",
             modifiers=(modifier,),
             runtime=runtime,
+            undo=undo,
         )
         prepared = collapse_to_poly(
             runtime, inspect_target(runtime), confirmed=True, undo_factory=undo
@@ -377,6 +473,7 @@ class CollapseTests(unittest.TestCase):
         self.assertTrue(prepared.ok, prepared.reason)
         self.assertEqual(runtime.v2_calls.count("convertTo"), 1)
         self.assertEqual(node.modifiers, [])
+        self.assertFalse(runtime.theHold.holding)
 
     def test_collapse_of_instanced_target_is_refused(self):
         runtime = V2Runtime()
