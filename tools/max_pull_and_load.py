@@ -171,9 +171,9 @@ NO_QT_MESSAGE = (
 MAIN_THREAD_MESSAGE = "The launcher must run on the 3ds Max main thread."
 DUPLICATE_MESSAGE = "An update is already in progress."
 LISTENER_TIP = (
-    "Diagnostics (Python tab, or in MAXScript tab run): python.Execute "
+    "MAXScript tab diagnostics: python.Execute "
     '"from max2025_menu_prototype.max_host import bootstrap; '
-    'print(bootstrap.report_diagnostics())"'
+    'bootstrap.report_diagnostics()"'
 )
 _NON_REPO_MAX_ENTRIES = 3
 _NON_REPO_MAX_NAME = 40
@@ -1053,21 +1053,28 @@ def _qt_bridge_factory() -> _SignalBridge:
     class _Bridge(QtCore.QObject):
         completed = QtCore.Signal(object)
 
-        def __init__(self) -> None:
+        # Keep these annotations off PySide6 slots: when this module is exec'd
+        # from a plain namespace, PEP 563 string annotations make Shiboken
+        # unable to resolve ``object``/``None`` during slot registration.
+        def __init__(self):
             super().__init__()
-            self._slots: list[Callable[[Any], None]] = []
+            self._slots = []
             self.completed.connect(self._deliver, QtCore.Qt.ConnectionType.QueuedConnection)
 
         @QtCore.Slot(object)
-        def _deliver(self, result: object) -> None:
+        def _deliver(self, result):
             for slot in list(self._slots):
                 slot(result)
 
-        def connect(self, slot: Callable[[Any], None]) -> None:
+        def connect(self, slot):
             self._slots.append(slot)
 
-        def emit(self, result: Any) -> None:
+        def emit(self, result):
             self.completed.emit(result)
+
+    module_name = _Bridge.__module__
+    if module_name not in sys.modules:
+        sys.modules[module_name] = types.ModuleType(module_name)
 
     bridge = _Bridge()
     bridge.moveToThread(application.thread())
@@ -1355,9 +1362,9 @@ NO_QT_MESSAGE = "Start 3ds Max 2025 before running the launcher; its Qt applicat
 MAIN_THREAD_MESSAGE = "The launcher must run on the 3ds Max main thread."
 DUPLICATE_MESSAGE = "An update is already in progress."
 LISTENER_TIP = (
-    "Diagnostics (Python tab, or in MAXScript tab run): python.Execute "
+    "MAXScript tab diagnostics: python.Execute "
     '"from max2025_menu_prototype.max_host import bootstrap; '
-    'print(bootstrap.report_diagnostics())"'
+    'bootstrap.report_diagnostics()"'
 )
 MISSING_GIT_MESSAGE = "Git is not on PATH. Install Git for Windows outside Max."
 TARGET_EXISTS_MESSAGE = "The checkout path already exists but is not a validated checkout. Repair or move it outside Max, then retry."
@@ -1426,6 +1433,36 @@ def _not_a_checkout_message():
 
 def _emit_listener_tip():
     _emit(LISTENER_TIP)
+
+
+def _companion_failed_message(exc):
+    """Return a bounded, ASCII-clean companion failure for the Listener."""
+
+    try:
+        name = "".join(
+            ch for ch in type(exc).__name__
+            if ch.isascii() and (ch.isalnum() or ch == "_")
+        )[:48] or "Exception"
+    except Exception:
+        name = "Exception"
+    try:
+        text = str(exc)
+    except Exception:
+        text = ""
+    cleaned = "".join(
+        ch if ch.isascii() and ch.isprintable() and ch not in "\r\n\t" else " "
+        for ch in text
+    )
+    cleaned = " ".join(cleaned.split())[:160].rstrip()
+    if cleaned:
+        return (
+            "The launcher companion failed to start (%s: %s). "
+            "Restart 3ds Max and retry." % (name, cleaned)
+        )
+    return (
+        "The launcher companion failed to start (%s). Restart 3ds Max and retry."
+        % name
+    )
 
 
 def _session():
@@ -1917,12 +1954,16 @@ def _invoke_companion(blob_sha256, normalized_sha256=None):
     }
     if not allowed or (digest not in allowed and normalized not in allowed):
         raise _CompanionChanged(COMPANION_CHANGED_MESSAGE)
-    namespace = {
-        "__name__": "_max2025_pull_and_load_companion",
-        "__file__": str(path),
-    }
-    exec(compile(data, str(path), "exec"), namespace)
-    starter = namespace.get("start")
+    module_name = "_max2025_pull_and_load_companion"
+    companion_mod = type(sys)(module_name)
+    companion_mod.__file__ = str(path)
+    sys.modules[module_name] = companion_mod
+    try:
+        exec(compile(data, str(path), "exec"), companion_mod.__dict__)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+    starter = getattr(companion_mod, "start", None)
     if not callable(starter):
         raise RuntimeError("The launcher companion is incomplete. Restart 3ds Max and re-clone.")
     starter()
@@ -1984,14 +2025,12 @@ def _after_update(result):
             result.get("companion_sha256"),
             result.get("companion_normalized_sha256"),
         )
-        _emit("Loaded commit %s from %s." % (head, CHECKOUT))
-        _emit_listener_tip()
     except _CompanionChanged:
         session.restart_required = True
         _retire_bootstrap(session)
         _emit(COMPANION_CHANGED_MESSAGE)
-    except Exception:
-        _emit(COMPANION_FAILED_MESSAGE)
+    except Exception as exc:
+        _emit(_companion_failed_message(exc))
 
 
 def _qt_bridge_factory(handler):

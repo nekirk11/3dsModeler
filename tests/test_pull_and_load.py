@@ -5,13 +5,16 @@ from __future__ import annotations
 import ast
 import contextlib
 import hashlib
+import inspect
 import io
 import os
 import signal
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
+import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -1864,13 +1867,119 @@ class EmbeddedLauncherTests(unittest.TestCase):
             bridge.deliver()
         self.assertTrue((self.checkout / "tools" / "companion-ran.flag").exists())
         self.assertTrue((self.checkout / "tools" / "companion-start.flag").exists())
-        self.assertIn("Loaded commit %s from" % SHA_ONE, stream.getvalue())
-        self.assertIn(launcher.LISTENER_TIP, stream.getvalue())
+        # The companion owns the authoritative success output after show_tools().
+        self.assertNotIn("Loaded commit", stream.getvalue())
+        self.assertNotIn(launcher.LISTENER_TIP, stream.getvalue())
         self.assertEqual(
             byte_calls[0],
             ("cat-file", "-p", SHA_ONE + ":tools/max_pull_and_load.py"),
         )
         self.assertFalse(session.restart_required)
+
+    def test_invoke_companion_registers_module_for_shiboken_slots(self):
+        """Simulate Shiboken's QObject/Slot requirements in the real source."""
+
+        factory_source = textwrap.dedent(
+            inspect.getsource(launcher._qt_bridge_factory)
+        )
+        companion_source = (
+            "from __future__ import annotations\n"
+            "import sys\n"
+            "import types\n"
+            "from typing import Any, Callable\n"
+            "\n"
+            "class _SignalBridge:\n"
+            "    pass\n"
+            "\n"
+            + factory_source
+            + "\n\n"
+            "def start():\n"
+            "    # The exec'd namespace must be the registered module, not a\n"
+            "    # throwaway copy that Shiboken cannot resolve.\n"
+            "    assert sys.modules[__name__].__dict__ is globals()\n"
+            "    _qt_bridge_factory()\n"
+        )
+        companion = self.checkout / "tools" / "max_pull_and_load.py"
+        companion.parent.mkdir(parents=True, exist_ok=True)
+        companion.write_text(companion_source, encoding="utf-8")
+
+        class _FakeSignal:
+            def __init__(self, *args, **kwargs):
+                self.name = None
+
+            def __set_name__(self, owner, name):
+                self.name = name
+
+            def __get__(self, instance, owner):
+                if instance is None:
+                    return self
+                signal = instance.__dict__.get(self.name)
+                if signal is None:
+                    signal = SimpleNamespace(
+                        connect=lambda *args, **kwargs: None,
+                        emit=lambda *args, **kwargs: None,
+                    )
+                    instance.__dict__[self.name] = signal
+                return signal
+
+        class _QObjectMeta(type):
+            def __new__(mcls, name, bases, namespace):
+                cls = super().__new__(mcls, name, bases, namespace)
+                assert cls.__module__ in sys.modules, cls.__module__
+                return cls
+
+        class _QObject(metaclass=_QObjectMeta):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+
+            def moveToThread(self, thread):
+                return None
+
+        class _Application:
+            @classmethod
+            def instance(cls):
+                return cls()
+
+            def thread(self):
+                return object()
+
+        def _slot(*args, **kwargs):
+            def decorate(fn):
+                assert not getattr(fn, "__annotations__", None), fn.__annotations__
+                return fn
+
+            return decorate
+
+        qtcore = types.ModuleType("PySide6.QtCore")
+        qtcore.QObject = _QObject
+        qtcore.Signal = _FakeSignal
+        qtcore.Slot = _slot
+        qtcore.Qt = SimpleNamespace(
+            ConnectionType=SimpleNamespace(QueuedConnection=0)
+        )
+        qtwidgets = types.ModuleType("PySide6.QtWidgets")
+        qtwidgets.QApplication = _Application
+        pyside = types.ModuleType("PySide6")
+        pyside.QtCore = qtcore
+        pyside.QtWidgets = qtwidgets
+
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        digest = hashlib.sha256(companion.read_bytes()).hexdigest()
+        self.addCleanup(sys.modules.pop, "_max2025_pull_and_load_companion", None)
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "PySide6": pyside,
+                "PySide6.QtCore": qtcore,
+                "PySide6.QtWidgets": qtwidgets,
+            },
+        ):
+            namespace["_invoke_companion"](digest)
+
+        self.assertIn(
+            "start", sys.modules["_max2025_pull_and_load_companion"].__dict__
+        )
 
     def test_embedded_companion_digest_mismatch_blocks_execution(self):
         write_checkout(self.checkout)

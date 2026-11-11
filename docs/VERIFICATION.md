@@ -44,6 +44,32 @@ Regression coverage in `tests/test_max_host.py`: blocked transforms for active
 Edit Poly levels 2 and 3, changed 2 → 3 revalidation blocked before dispatch,
 direct binding refusal, and object-level Edit Poly transform still allowed.
 
+## Launcher companion Qt registration fix
+
+**Symptom:** after a successful clone in 3ds Max 2025, the Listener printed
+`The launcher companion failed to start. Restart 3ds Max and retry.`
+
+**Root cause:** the embedded bootstrap executed the companion source with a
+plain dict namespace but never registered a `ModuleType` in `sys.modules`.
+PySide6/Shiboken therefore raised `KeyError` while creating the
+`class _Bridge(QtCore.QObject)` and resolving `_Bridge.__module__`. Separately,
+`from __future__ import annotations` stringified the companion's `@Slot`
+method annotations, which Shiboken cannot resolve.
+
+**Fix:** `_invoke_companion` now execs into a registered
+`_max2025_pull_and_load_companion` module (and removes it only if exec fails).
+`_qt_bridge_factory` keeps all `_Bridge` methods unannotated and registers a
+`ModuleType` fallback for its own module name. The embedded bootstrap no
+longer prints a premature `Loaded commit ...`/tip; the companion's
+`_on_git_finished` remains authoritative after `bootstrap.show_tools()`. An
+unexpected companion failure now reports a bounded, ASCII-clean exception type
+and message, and `LISTENER_TIP` explicitly names the MAXScript tab.
+
+**Regression coverage:** `tests/test_pull_and_load.py` executes the real
+`_qt_bridge_factory` source through `_invoke_companion` with a fake Shiboken
+`QObject` metaclass that asserts the class module is in `sys.modules` and that
+`@Slot` functions carry no annotations.
+
 ## Commands and results
 
 | Check | Command | Result |
