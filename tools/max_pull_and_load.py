@@ -43,6 +43,7 @@ import importlib.util
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -72,6 +73,8 @@ SESSION_FIELDS = (
 LOCAL_GIT_TIMEOUT = 15.0
 NETWORK_GIT_TIMEOUT = 120.0
 _MAX_CAPTURED_BYTES = 65536
+# Bounded grace period for terminating and reaping a timed-out Git tree.
+_KILL_WAIT = 5.0
 _HEX_SHA = re.compile(r"^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$")
 
 REQUIRED_ROOT_ENTRIES = (
@@ -153,10 +156,20 @@ class LauncherError(RuntimeError):
     Listener; ``message`` never contains raw process output or credentials.
     """
 
-    def __init__(self, message: str, category: str = "launcher") -> None:
+    def __init__(
+        self,
+        message: str,
+        category: str = "launcher",
+        *,
+        tree_reaped: bool = True,
+    ) -> None:
         super().__init__(message)
         self.category = category
         self.message = message
+        # ``False`` means a timed-out Git child (or one of its helpers) could
+        # not be confirmed stopped; the session must not allow a retry because
+        # that helper may still be mutating the checkout.
+        self.tree_reaped = tree_reaped
 
 
 # ---------------------------------------------------------------------------
@@ -367,10 +380,91 @@ def _uninstall_trusted(session: types.ModuleType) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _is_windows() -> bool:
+    """Indirection so tests can simulate the Windows transport path."""
+
+    return os.name == "nt"
+
+
 def _creation_flags() -> int:
-    if os.name == "nt":
+    if _is_windows():
         return int(getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
     return 0
+
+
+def _process_kwargs() -> dict[str, Any]:
+    """Return ``Popen`` keywords that put Git in its own kill-able group."""
+
+    kwargs: dict[str, Any] = {"creationflags": _creation_flags()}
+    if not _is_windows():
+        # A dedicated session/process group lets ``killpg`` reach transport
+        # and credential helpers that inherit Git's pipes.
+        kwargs["start_new_session"] = True
+    return kwargs
+
+
+def _reap(process: subprocess.Popen) -> bool:
+    """Bounded reap; True only when the child is confirmed exited."""
+
+    try:
+        process.communicate(timeout=_KILL_WAIT)
+        return True
+    except subprocess.TimeoutExpired:
+        pass
+    except Exception:
+        return process.poll() is not None
+
+    for stream in (getattr(process, "stdout", None), getattr(process, "stderr", None)):
+        if stream is None:
+            continue
+        try:
+            stream.close()
+        except Exception:
+            pass
+    try:
+        process.wait(timeout=_KILL_WAIT)
+        return True
+    except subprocess.TimeoutExpired:
+        return False
+    except Exception:
+        return process.poll() is not None
+
+
+def _terminate_tree(process: subprocess.Popen) -> bool:
+    """Terminate the whole Git process tree and confirm it was reaped.
+
+    Killing only the immediate ``git`` process lets spawned Windows transport
+    helpers (``git-remote-https``, ``git-credential-manager``, ...) survive and
+    keep stdout/stderr open.  ``taskkill /T`` ends that tree on Windows and a
+    signal to the process group does the same on POSIX.
+    """
+
+    pid = getattr(process, "pid", None)
+    if pid is not None:
+        if _is_windows():
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    shell=False,
+                    creationflags=_creation_flags(),
+                    timeout=_KILL_WAIT,
+                    check=False,
+                )
+            except Exception:
+                pass
+        else:
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except Exception:
+                pass
+    try:
+        process.kill()
+    except Exception:
+        pass
+    return _reap(process)
 
 
 def _git_environment() -> dict[str, str]:
@@ -398,7 +492,9 @@ def _run_git(
 
     Never called on the main thread.  Arguments are an array, the shell is
     disabled, stdin is ``DEVNULL``, output is bounded, prompts are disabled,
-    and a timed-out process is killed and reaped before the error is returned.
+    and a timed-out process tree is terminated and reaped before the timeout
+    error is returned.  If the tree cannot be confirmed reaped the error is
+    flagged so the session stays locked instead of racing the survivor.
     """
 
     executable = shutil.which("git")
@@ -415,7 +511,7 @@ def _run_git(
             stderr=subprocess.PIPE,
             shell=False,
             env=_git_environment(),
-            creationflags=_creation_flags(),
+            **_process_kwargs(),
         )
     except OSError as exc:
         raise LauncherError(GIT_FAILED_MESSAGE, "git_failed") from exc
@@ -423,12 +519,12 @@ def _run_git(
     try:
         stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.kill()
-        try:
-            process.communicate(timeout=5)
-        except Exception:
-            pass
-        raise LauncherError(TIMEOUT_MESSAGE, "timeout")
+        reaped = _terminate_tree(process)
+        raise LauncherError(
+            TIMEOUT_MESSAGE, "timeout", tree_reaped=reaped
+        ) from None
+    except OSError as exc:
+        raise LauncherError(GIT_FAILED_MESSAGE, "git_failed") from exc
     return GitResult(process.returncode, _bounded(stdout), _bounded(stderr))
 
 
@@ -633,6 +729,7 @@ def _result(
     after_sha: Optional[str] = None,
     category: str = "",
     message: str = "",
+    unreaped: bool = False,
 ) -> dict[str, Any]:
     return {
         "ok": ok,
@@ -641,11 +738,14 @@ def _result(
         "after_sha": after_sha,
         "category": category,
         "message": message,
+        "unreaped": unreaped,
     }
 
 
-def _failure(category: str, message: str) -> dict[str, Any]:
-    return _result(ok=False, action="failed", category=category, message=message)
+def _failure(category: str, message: str, *, unreaped: bool = False) -> dict[str, Any]:
+    return _result(
+        ok=False, action="failed", category=category, message=message, unreaped=unreaped
+    )
 
 
 def _worker_update(
@@ -751,7 +851,9 @@ def _worker_update(
             after_sha=after,
         )
     except LauncherError as exc:
-        return _failure(exc.category, exc.message)
+        return _failure(
+            exc.category, exc.message, unreaped=not exc.tree_reaped
+        )
     except Exception:
         return _failure(
             "internal",
@@ -944,6 +1046,12 @@ def _on_git_finished(result: dict[str, Any], checkout: Path) -> None:
     if not result.get("ok"):
         category = str(result.get("category", "internal"))
         message = str(result.get("message", GIT_FAILED_MESSAGE))
+        if result.get("unreaped"):
+            # A timed-out Git helper could not be confirmed stopped.  Keep the
+            # session locked: a retry could race a live process mutating the
+            # checkout.  The timeout message still reaches the caller.
+            session.restart_required = True
+            _uninstall_trusted(session)
         if category in ("restart_required", "stale_import", "partial_import"):
             _enter_restart_required(session, message)
         else:
@@ -1057,6 +1165,7 @@ import base64
 import os
 import runpy
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -1070,6 +1179,7 @@ SESSION_MODULE_NAME = "_max2025_pull_and_load_session"
 SESSION_SCHEMA_VERSION = 1
 LOCAL_GIT_TIMEOUT = 15.0
 NETWORK_GIT_TIMEOUT = 120.0
+_KILL_WAIT = 5.0
 _MAX_CAPTURED_BYTES = 65536
 RESTART_MESSAGE = "Checkout updated; restart 3ds Max before loading this commit."
 NO_QT_MESSAGE = "Start 3ds Max 2025 before running the launcher; its Qt application was not found."
@@ -1083,6 +1193,13 @@ NETWORK_MESSAGE = "Git could not reach the repository. Check the network and ret
 GIT_FAILED_MESSAGE = "Git reported a failure. Repair the checkout outside Max."
 TIMEOUT_MESSAGE = "Git did not finish in time. No retry was attempted."
 LAYOUT_MESSAGE = "The checkout layout is not a complete prototype package. Repair it outside Max."
+DIRTY_MESSAGE = "The checkout has uncommitted changes. Commit or stash them outside Max, then retry."
+BRANCH_MESSAGE = "The checkout is not on the dev branch. Repair it outside Max."
+ORIGIN_MESSAGE = "The checkout origin is not the expected HTTPS repository. Repair it outside Max."
+TOP_LEVEL_MESSAGE = "The Git top-level is not the checkout directory. Repair it outside Max."
+GIT_OPERATION_MESSAGE = "A Git merge, rebase, cherry-pick, or sequencer operation is in progress. Finish or abort it outside Max."
+COMPANION_MESSAGE = "The launcher companion is missing from the checkout. Repair it outside Max."
+COMPANION_FAILED_MESSAGE = "The launcher companion failed to start. Restart 3ds Max and retry."
 
 _REQUIRED = ("__init__.py", "core", "max_host", "qt_ui", "core/default_profile.json")
 _HEX = "0123456789abcdefABCDEF"
@@ -1123,10 +1240,21 @@ def _alias_loaded():
     )
 
 
+def _is_windows():
+    return os.name == "nt"
+
+
 def _creation_flags():
-    if os.name == "nt":
+    if _is_windows():
         return int(getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
     return 0
+
+
+def _process_kwargs():
+    kwargs = {"creationflags": _creation_flags()}
+    if not _is_windows():
+        kwargs["start_new_session"] = True
+    return kwargs
 
 
 def _environment():
@@ -1144,29 +1272,95 @@ def _bounded(data):
     return data[:_MAX_CAPTURED_BYTES].decode("utf-8", "replace")
 
 
+class _GitFailure(Exception):
+    def __init__(self, message, category):
+        Exception.__init__(self, message)
+        self.message = message
+        self.category = category
+
+
+class _GitTimeout(Exception):
+    def __init__(self, reaped):
+        Exception.__init__(self, TIMEOUT_MESSAGE)
+        self.reaped = reaped
+
+
+def _reap(process):
+    try:
+        process.communicate(timeout=_KILL_WAIT)
+        return True
+    except subprocess.TimeoutExpired:
+        pass
+    except Exception:
+        return process.poll() is not None
+    for stream in (getattr(process, "stdout", None), getattr(process, "stderr", None)):
+        if stream is None:
+            continue
+        try:
+            stream.close()
+        except Exception:
+            pass
+    try:
+        process.wait(timeout=_KILL_WAIT)
+        return True
+    except subprocess.TimeoutExpired:
+        return False
+    except Exception:
+        return process.poll() is not None
+
+
+def _terminate_tree(process):
+    pid = getattr(process, "pid", None)
+    if pid is not None:
+        if _is_windows():
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    shell=False,
+                    creationflags=_creation_flags(),
+                    timeout=_KILL_WAIT,
+                    check=False,
+                )
+            except Exception:
+                pass
+        else:
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except Exception:
+                pass
+    try:
+        process.kill()
+    except Exception:
+        pass
+    return _reap(process)
+
+
 def _run_git(args, cwd, timeout):
     executable = shutil.which("git")
     if not executable:
-        return None, MISSING_GIT_MESSAGE, "missing_git"
-    process = subprocess.Popen(
-        [executable, *[str(item) for item in args]],
-        cwd=str(cwd),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=False,
-        env=_environment(),
-        creationflags=_creation_flags(),
-    )
+        raise _GitFailure(MISSING_GIT_MESSAGE, "missing_git")
+    try:
+        process = subprocess.Popen(
+            [executable, *[str(item) for item in args]],
+            cwd=str(cwd),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            env=_environment(),
+            **_process_kwargs(),
+        )
+    except OSError:
+        raise _GitFailure(GIT_FAILED_MESSAGE, "git_failed") from None
     try:
         stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.kill()
-        try:
-            process.communicate(timeout=5)
-        except Exception:
-            pass
-        return None, TIMEOUT_MESSAGE, "timeout"
+        raise _GitTimeout(_terminate_tree(process)) from None
+    except OSError:
+        raise _GitFailure(GIT_FAILED_MESSAGE, "git_failed") from None
     return (process.returncode, _bounded(stdout), _bounded(stderr))
 
 
@@ -1186,60 +1380,174 @@ def _classify(stderr, stdout):
     return GIT_FAILED_MESSAGE, "git_failed"
 
 
-def _head():
-    code, stdout, stderr = _run_git(["rev-parse", "HEAD"], CHECKOUT, LOCAL_GIT_TIMEOUT)
+def _git_stdout(args, cwd, timeout=LOCAL_GIT_TIMEOUT):
+    code, stdout, stderr = _run_git(args, cwd, timeout)
     if code != 0:
-        return None, _classify(stderr, stdout)[0], "git_failed"
-    value = stdout.strip()
-    if len(value) not in (40, 64) or any(ch not in _HEX for ch in value):
-        return None, "The checkout HEAD is not a full commit identifier. Repair it outside Max.", "checkout_layout"
-    return value.lower(), "", ""
+        message, category = _classify(stderr, stdout)
+        raise _GitFailure(message, category)
+    return stdout.strip()
 
 
-def _validate():
+def _same_path(left, right):
+    try:
+        left_text = os.path.normcase(str(Path(left).resolve()))
+        right_text = os.path.normcase(str(Path(right).resolve()))
+    except OSError:
+        return False
+    return left_text == right_text
+
+
+def _normalize_remote(url):
+    text = (url or "").strip().rstrip("/")
+    if text.lower().endswith(".git"):
+        text = text[:-4]
+    return text.rstrip("/")
+
+
+_EXPECTED_REMOTE = _normalize_remote(REPO_URL)
+
+
+def _full_sha(value):
+    text = (value or "").strip()
+    if len(text) not in (40, 64) or any(ch not in _HEX for ch in text):
+        raise _GitFailure(
+            "The checkout HEAD is not a full commit identifier. Repair it outside Max.",
+            "checkout_layout",
+        )
+    return text.lower()
+
+
+def _operation_in_progress(root):
+    try:
+        git_dir = Path(_git_stdout(["rev-parse", "--absolute-git-dir"], root))
+    except _GitFailure:
+        return False
+    for name in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD",
+                 "rebase-merge", "rebase-apply", "sequencer"):
+        if (git_dir / name).exists():
+            return True
+    return False
+
+
+def _inside(path, root):
+    try:
+        return Path(path).resolve().is_relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def _layout(root):
+    for relative in _REQUIRED:
+        candidate = root / relative
+        if not candidate.exists():
+            raise _GitFailure(LAYOUT_MESSAGE, "checkout_layout")
+        if candidate.is_symlink() and not _inside(candidate.resolve(), root):
+            raise _GitFailure(LAYOUT_MESSAGE, "checkout_layout")
+
+
+def _validate_checkout():
+    if CHECKOUT.is_symlink():
+        raise _GitFailure(LAYOUT_MESSAGE, "checkout_layout")
     try:
         root = CHECKOUT.resolve()
     except OSError:
-        return None, LAYOUT_MESSAGE, "checkout_layout"
+        raise _GitFailure(LAYOUT_MESSAGE, "checkout_layout") from None
     if not root.is_dir():
-        return None, LAYOUT_MESSAGE, "checkout_layout"
-    for relative in _REQUIRED:
-        if not (root / relative).exists():
-            return None, LAYOUT_MESSAGE, "checkout_layout"
-    return root, "", ""
+        raise _GitFailure(LAYOUT_MESSAGE, "checkout_layout")
+    _layout(root)
+    top_level = _git_stdout(["rev-parse", "--show-toplevel"], root)
+    if not _same_path(top_level, root):
+        raise _GitFailure(TOP_LEVEL_MESSAGE, "wrong_top_level")
+    if _git_stdout(["rev-parse", "--is-bare-repository"], root).lower() == "true":
+        raise _GitFailure(LAYOUT_MESSAGE, "checkout_layout")
+    code, stdout, _stderr = _run_git(
+        ["symbolic-ref", "--quiet", "--short", "HEAD"], root, LOCAL_GIT_TIMEOUT
+    )
+    if code != 0:
+        raise _GitFailure(BRANCH_MESSAGE, "detached_head")
+    if stdout.strip() != BRANCH:
+        raise _GitFailure(BRANCH_MESSAGE, "wrong_branch")
+    code, stdout, _stderr = _run_git(
+        ["remote", "get-url", "origin"], root, LOCAL_GIT_TIMEOUT
+    )
+    if code != 0:
+        raise _GitFailure(ORIGIN_MESSAGE, "wrong_origin")
+    if _normalize_remote(stdout) != _EXPECTED_REMOTE:
+        raise _GitFailure(ORIGIN_MESSAGE, "wrong_origin")
+    head = _full_sha(_git_stdout(["rev-parse", "HEAD"], root))
+    if _operation_in_progress(root):
+        raise _GitFailure(GIT_OPERATION_MESSAGE, "git_operation")
+    code, stdout, stderr = _run_git(
+        ["status", "--porcelain=v1", "--untracked-files=all"],
+        root,
+        LOCAL_GIT_TIMEOUT,
+    )
+    if code != 0:
+        message, category = _classify(stderr, stdout)
+        raise _GitFailure(message, category)
+    if stdout.strip():
+        raise _GitFailure(DIRTY_MESSAGE, "dirty_tree")
+    return head
+
+
+def _head():
+    return _full_sha(_git_stdout(["rev-parse", "HEAD"], CHECKOUT))
 
 
 def _clone_result():
     if not shutil.which("git"):
-        return {"ok": False, "message": MISSING_GIT_MESSAGE, "category": "missing_git"}
+        raise _GitFailure(MISSING_GIT_MESSAGE, "missing_git")
     if CHECKOUT.exists():
-        return {"ok": False, "message": TARGET_EXISTS_MESSAGE, "category": "permission"}
+        raise _GitFailure(TARGET_EXISTS_MESSAGE, "permission")
     try:
         CHECKOUT.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
-        return {"ok": False, "message": TARGET_EXISTS_MESSAGE, "category": "permission"}
+        raise _GitFailure(TARGET_EXISTS_MESSAGE, "permission") from None
     code, stdout, stderr = _run_git(
         ["clone", "--branch", BRANCH, REPO_URL, str(CHECKOUT)],
         CHECKOUT.parent,
         NETWORK_GIT_TIMEOUT,
     )
-    if code is None:
-        return {"ok": False, "message": stderr, "category": "timeout"}
     if code != 0:
         if CHECKOUT.exists():
-            return {"ok": False, "message": PARTIAL_CLONE_MESSAGE, "category": "partial_clone"}
+            raise _GitFailure(PARTIAL_CLONE_MESSAGE, "partial_clone")
         message, category = _classify(stderr, stdout)
-        return {"ok": False, "message": message, "category": category}
-    head, message, category = _head()
-    if head is None:
-        return {"ok": False, "message": message, "category": "partial_clone"}
-    return {"ok": True, "head": head, "message": "Cloned commit %s." % head[:12]}
+        raise _GitFailure(message, category)
+    try:
+        head = _validate_checkout()
+    except _GitFailure:
+        raise _GitFailure(PARTIAL_CLONE_MESSAGE, "partial_clone") from None
+    return {"ok": True, "action": "clone", "head": head,
+            "message": "Cloned commit %s." % head[:12]}
+
+
+def _existing_result():
+    head = _validate_checkout()
+    return {"ok": True, "action": "existing", "head": head, "message": ""}
+
+
+def _update_result():
+    try:
+        if CHECKOUT.exists():
+            return _existing_result()
+        return _clone_result()
+    except _GitTimeout as exc:
+        return {"ok": False, "message": TIMEOUT_MESSAGE, "category": "timeout",
+                "unreaped": not exc.reaped}
+    except _GitFailure as exc:
+        return {"ok": False, "message": exc.message, "category": exc.category}
+    except Exception:
+        return {"ok": False, "message": GIT_FAILED_MESSAGE, "category": "internal"}
+
+
+def _companion_path():
+    return CHECKOUT / "tools" / "max_pull_and_load.py"
 
 
 def _invoke_companion():
-    path = CHECKOUT / "tools" / "max_pull_and_load.py"
+    path = _companion_path()
     if not path.is_file():
-        raise RuntimeError("The launcher companion is missing. Restart 3ds Max and re-clone.")
+        raise RuntimeError(COMPANION_MESSAGE)
     namespace = runpy.run_path(str(path), run_name="_max2025_pull_and_load_companion")
     starter = namespace.get("start")
     if not callable(starter):
@@ -1247,23 +1555,63 @@ def _invoke_companion():
     starter()
 
 
-def _after_clone(result):
+def _retire_bootstrap(session):
+    module = session.bootstrap
+    if module is None:
+        return
+    try:
+        module.uninstall()
+    except Exception:
+        pass
+    finally:
+        session.bootstrap = None
+
+
+def _validated_head(result):
+    head = result.get("head")
+    if not isinstance(head, str) or len(head) not in (40, 64):
+        return None
+    if any(ch not in _HEX for ch in head):
+        return None
+    return head.lower()
+
+
+def _after_update(result):
     session = _session()
     session.in_flight = False
     session.worker = None
     session.bridge = None
     if not result.get("ok"):
+        if result.get("unreaped"):
+            session.restart_required = True
+            _retire_bootstrap(session)
         _emit(str(result.get("message") or GIT_FAILED_MESSAGE))
         return
-    if session.loaded_head_sha is not None:
+    head = _validated_head(result)
+    if head is None:
         session.restart_required = True
         _emit(RESTART_MESSAGE)
         return
-    session.first_clone_head_sha = result["head"]
+    if result.get("action") == "clone":
+        if session.loaded_head_sha is not None:
+            session.restart_required = True
+            _emit(RESTART_MESSAGE)
+            return
+        session.first_clone_head_sha = head
+    elif session.loaded_head_sha is not None and head != session.loaded_head_sha:
+        # Validation ran in the worker; a changed checkout must never execute
+        # the updated on-disk companion against the already loaded UI.
+        session.restart_required = True
+        _retire_bootstrap(session)
+        _emit(RESTART_MESSAGE)
+        return
+    if not _companion_path().is_file():
+        _emit(COMPANION_MESSAGE)
+        return
     try:
         _invoke_companion()
     except Exception:
-        _emit("The launcher companion failed to start. Restart 3ds Max and retry.")
+        _emit(COMPANION_FAILED_MESSAGE)
 
 
 def _qt_bridge_factory(handler):
@@ -1292,7 +1640,7 @@ def _qt_bridge_factory(handler):
 def _thread_worker_factory(target, bridge):
     class _Worker:
         def __init__(self):
-            self._thread = threading.Thread(target=self._run, name="max2025-clone", daemon=True)
+            self._thread = threading.Thread(target=self._run, name="max2025-launcher", daemon=True)
 
         def start(self):
             self._thread.start()
@@ -1320,19 +1668,19 @@ def _schedule(*, bridge_factory=None, worker_factory=None):
     if session.in_flight:
         _emit(DUPLICATE_MESSAGE)
         return None
-    companion = CHECKOUT / "tools" / "max_pull_and_load.py"
-    if companion.is_file():
-        _invoke_companion()
-        return None
-    if session.loaded_head_sha is not None or _alias_loaded():
+    if not CHECKOUT.exists() and (session.loaded_head_sha is not None or _alias_loaded()):
         session.restart_required = True
         raise RuntimeError(RESTART_MESSAGE)
     session.in_flight = True
-    bridge = (bridge_factory or _qt_bridge_factory)(_after_clone)
-    worker = (worker_factory or _thread_worker_factory)(_clone_result, bridge)
+    try:
+        bridge = (bridge_factory or _qt_bridge_factory)(_after_update)
+        worker = (worker_factory or _thread_worker_factory)(_update_result, bridge)
+    except Exception:
+        session.in_flight = False
+        raise
     session.bridge = bridge
     session.worker = worker
-    _emit("Cloning %s from %s ..." % (CHECKOUT, REPO_URL))
+    _emit("Checking %s for updates ..." % CHECKOUT)
     worker.start()
     return None
 

@@ -6,6 +6,7 @@ import ast
 import contextlib
 import io
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -489,6 +490,55 @@ def checkout_responses(root: Path, head: str, remote: str | None = None) -> dict
     }
 
 
+def embedded_checkout_responses(root: Path, head: str) -> dict:
+    """Responses for the embedded worker's ``_run_git`` tuple protocol."""
+
+    return {
+        ("rev-parse", "--show-toplevel"): str(root),
+        ("rev-parse", "--is-bare-repository"): "false",
+        ("symbolic-ref", "--quiet", "--short", "HEAD"): "dev",
+        ("remote", "get-url", "origin"): launcher.REPO_URL,
+        ("rev-parse", "HEAD"): head,
+        ("rev-parse", "--absolute-git-dir"): str(root / ".git"),
+        ("status", "--porcelain=v1", "--untracked-files=all"): "",
+    }
+
+
+def embedded_git_stub(responses: dict, calls: list | None = None):
+    """Fake ``_run_git`` for the embedded bootstrap's tuple protocol."""
+
+    def run(args, cwd, timeout):
+        key = tuple(str(item) for item in args)
+        if calls is not None:
+            calls.append(key)
+        handler = responses.get(key, "")
+        if isinstance(handler, BaseException):
+            raise handler
+        if isinstance(handler, tuple):
+            return handler
+        return (0, handler, "")
+
+    return run
+
+
+COMPANION_MARKER = (
+    "from pathlib import Path\n"
+    "Path(__file__).with_name('companion-ran.flag').write_text('ran',"
+    " encoding='utf-8')\n"
+)
+
+
+def write_companion(root: Path) -> Path:
+    """Write an executable-on-import companion that records that it ran."""
+
+    tools = root / "tools"
+    tools.mkdir(parents=True, exist_ok=True)
+    path = tools / "max_pull_and_load.py"
+    path.write_text(COMPANION_MARKER, encoding="utf-8")
+    return path
+
+
+
 class CheckoutValidationTests(unittest.TestCase):
     def setUp(self):
         self._temp = tempfile.TemporaryDirectory()
@@ -567,6 +617,40 @@ class CheckoutValidationTests(unittest.TestCase):
         self.assertEqual(raised.exception.category, "git_operation")
 
 
+class ReapingProcess:
+    """Fake ``Popen`` whose timeout path can end reaped or still running."""
+
+    returncode = -9
+
+    def __init__(self, pid: int = 4321, *, reaped: bool = True) -> None:
+        self.pid = pid
+        self.reaped = reaped
+        self.communicate_calls = 0
+        self.killed = False
+        self.waited = 0
+        self.closed: list[str] = []
+        self.stdout = SimpleNamespace(close=lambda: self.closed.append("stdout"))
+        self.stderr = SimpleNamespace(close=lambda: self.closed.append("stderr"))
+
+    def communicate(self, timeout=None):
+        self.communicate_calls += 1
+        if self.communicate_calls == 1 or not self.reaped:
+            raise subprocess.TimeoutExpired("git", timeout)
+        return b"", b""
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        self.waited += 1
+        if self.reaped:
+            return self.returncode
+        raise subprocess.TimeoutExpired("git", timeout)
+
+    def poll(self):
+        return self.returncode if self.reaped else None
+
+
 class GitExecutionTests(unittest.TestCase):
     def test_missing_git_is_a_finite_error(self):
         with mock.patch.object(launcher.shutil, "which", return_value=None):
@@ -588,6 +672,7 @@ class GitExecutionTests(unittest.TestCase):
                 return b"out", b"err"
 
         with mock.patch.object(launcher.shutil, "which", return_value="/usr/bin/git"), \
+                mock.patch.object(launcher, "_is_windows", return_value=False), \
                 mock.patch.object(launcher.subprocess, "Popen", FakeProcess):
             result = launcher._run_git(
                 ["status", "--porcelain"], cwd=Path("/tmp"), timeout=15
@@ -597,55 +682,96 @@ class GitExecutionTests(unittest.TestCase):
         self.assertIs(kwargs["shell"], False)
         self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
         self.assertEqual(kwargs["creationflags"], 0)
+        self.assertTrue(kwargs["start_new_session"])
         self.assertEqual(kwargs["env"]["GIT_TERMINAL_PROMPT"], "0")
         self.assertEqual(kwargs["env"]["GCM_INTERACTIVE"], "Never")
         self.assertNotIn("GIT_ASKPASS", kwargs["env"])
         self.assertNotIn("SSH_ASKPASS", kwargs["env"])
         self.assertEqual(result.stdout, "out")
 
-    def test_windows_creation_flags_are_simulated(self):
+    def test_windows_process_options_are_simulated(self):
         observed: dict = {}
 
-        class FakeProcess:
-            returncode = 0
-
-            def __init__(self, command, **kwargs):
-                observed.update(kwargs)
-
-            def communicate(self, timeout=None):
-                return b"", b""
+        def fake_popen(command, **kwargs):
+            observed.update(kwargs)
+            return SimpleNamespace(
+                returncode=0, communicate=lambda timeout=None: (b"", b"")
+            )
 
         with mock.patch.object(launcher.shutil, "which", return_value="git"), \
-                mock.patch.object(launcher, "_creation_flags", return_value=0x08000000), \
-                mock.patch.object(launcher.subprocess, "Popen", FakeProcess):
+                mock.patch.object(launcher, "_is_windows", return_value=True), \
+                mock.patch.object(launcher.subprocess, "Popen", fake_popen):
             launcher._run_git(["status"], cwd=Path("/tmp"), timeout=15)
         self.assertEqual(observed["creationflags"], 0x08000000)
+        self.assertNotIn("start_new_session", observed)
 
-    def test_timeout_kills_and_reaps_then_stops(self):
-        class FakeProcess:
-            returncode = -9
+    def test_timeout_kills_entire_tree_on_posix(self):
+        process = ReapingProcess()
+        observed: dict = {}
+        killpg = mock.Mock()
 
-            def __init__(self):
-                self.killed = False
-                self.calls = 0
+        def fake_popen(command, **kwargs):
+            observed.update(kwargs)
+            return process
 
-            def communicate(self, timeout=None):
-                self.calls += 1
-                if self.calls == 1:
-                    raise subprocess.TimeoutExpired("git", timeout)
-                return b"", b""
-
-            def kill(self):
-                self.killed = True
-
-        process = FakeProcess()
         with mock.patch.object(launcher.shutil, "which", return_value="git"), \
-                mock.patch.object(launcher.subprocess, "Popen", return_value=process):
+                mock.patch.object(launcher, "_is_windows", return_value=False), \
+                mock.patch.object(launcher.os, "getpgid", return_value=4321), \
+                mock.patch.object(launcher.os, "killpg", killpg), \
+                mock.patch.object(launcher.subprocess, "Popen", fake_popen):
             with self.assertRaises(launcher.LauncherError) as raised:
                 launcher._run_git(["fetch"], cwd=Path("/tmp"), timeout=1)
         self.assertEqual(raised.exception.category, "timeout")
+        self.assertEqual(raised.exception.message, launcher.TIMEOUT_MESSAGE)
+        self.assertTrue(raised.exception.tree_reaped)
+        killpg.assert_called_once_with(4321, signal.SIGKILL)
         self.assertTrue(process.killed)
-        self.assertEqual(process.calls, 2)
+        self.assertTrue(observed["start_new_session"])
+        self.assertGreaterEqual(process.communicate_calls, 2)
+
+    def test_timeout_uses_taskkill_tree_on_windows(self):
+        process = ReapingProcess()
+        observed: dict = {}
+        run_calls: list = []
+
+        def fake_popen(command, **kwargs):
+            observed.update(kwargs)
+            return process
+
+        def fake_run(command, **kwargs):
+            run_calls.append((command, kwargs))
+            return SimpleNamespace(returncode=0)
+
+        with mock.patch.object(launcher.shutil, "which", return_value="git"), \
+                mock.patch.object(launcher, "_is_windows", return_value=True), \
+                mock.patch.object(launcher.subprocess, "Popen", fake_popen), \
+                mock.patch.object(launcher.subprocess, "run", fake_run):
+            with self.assertRaises(launcher.LauncherError) as raised:
+                launcher._run_git(["fetch"], cwd=Path("/tmp"), timeout=1)
+        self.assertEqual(raised.exception.category, "timeout")
+        self.assertTrue(raised.exception.tree_reaped)
+        command, kwargs = run_calls[0]
+        self.assertEqual(command, ["taskkill", "/F", "/T", "/PID", "4321"])
+        self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
+        self.assertIs(kwargs["shell"], False)
+        self.assertEqual(kwargs["creationflags"], 0x08000000)
+        self.assertEqual(observed["creationflags"], 0x08000000)
+        self.assertNotIn("start_new_session", observed)
+
+    def test_unreaped_tree_fails_closed_with_timeout_message(self):
+        process = ReapingProcess(reaped=False)
+        with mock.patch.object(launcher.shutil, "which", return_value="git"), \
+                mock.patch.object(launcher, "_is_windows", return_value=False), \
+                mock.patch.object(launcher.os, "getpgid", return_value=4321), \
+                mock.patch.object(launcher.os, "killpg", mock.Mock()), \
+                mock.patch.object(launcher.subprocess, "Popen", lambda *a, **k: process):
+            with self.assertRaises(launcher.LauncherError) as raised:
+                launcher._run_git(["fetch"], cwd=Path("/tmp"), timeout=1)
+        self.assertEqual(raised.exception.category, "timeout")
+        self.assertEqual(raised.exception.message, launcher.TIMEOUT_MESSAGE)
+        self.assertFalse(raised.exception.tree_reaped)
+        self.assertEqual(process.closed, ["stdout", "stderr"])
+        self.assertGreaterEqual(process.waited, 1)
 
     def test_failure_classification_never_exposes_raw_output(self):
         auth = launcher._classify_git_failure(
@@ -835,6 +961,24 @@ class WorkerTests(unittest.TestCase):
         )
         self.assertFalse(result["ok"])
         self.assertEqual(result["category"], "checkout_changed")
+
+    def test_unreaped_timeout_is_reported_without_further_git_calls(self):
+        error = launcher.LauncherError(
+            launcher.TIMEOUT_MESSAGE, "timeout", tree_reaped=False
+        )
+        result, stub = self._run({("rev-parse", "--show-toplevel"): error})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["category"], "timeout")
+        self.assertEqual(result["message"], launcher.TIMEOUT_MESSAGE)
+        self.assertTrue(result["unreaped"])
+        self.assertEqual(len(stub.calls), 1)
+
+    def test_reaped_timeout_is_not_flagged_unreaped(self):
+        error = launcher.LauncherError(launcher.TIMEOUT_MESSAGE, "timeout")
+        result, _stub = self._run({("rev-parse", "--show-toplevel"): error})
+        self.assertEqual(result["category"], "timeout")
+        self.assertEqual(result["message"], launcher.TIMEOUT_MESSAGE)
+        self.assertFalse(result["unreaped"])
 
     def test_missing_checkout_clones_and_reports_head(self):
         target = self.temp / "dev" / "3dsModeler"
@@ -1063,6 +1207,46 @@ class StartTests(unittest.TestCase):
         load.assert_not_called()
         self.assertFalse(sys.modules[launcher.SESSION_MODULE_NAME].restart_required)
 
+    def test_unreaped_timeout_locks_session_but_keeps_timeout_message(self):
+        bootstrap = FakeBootstrap()
+        session = launcher._session_state()
+        session.checkout_root = str(self.checkout)
+        session.loaded_head_sha = SHA_ONE
+        session.bootstrap = bootstrap
+        result = launcher._failure(
+            "timeout", launcher.TIMEOUT_MESSAGE, unreaped=True
+        )
+        bridge_patch, worker_patch, update_patch = self._patch(result)
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream), \
+                bridge_patch, worker_patch, update_patch:
+            launcher.start(checkout=self.checkout)
+            self.worker.run_target()
+            with self.assertRaises(launcher.LauncherError) as raised:
+                self.bridge.deliver()
+        self.assertEqual(raised.exception.category, "timeout")
+        self.assertEqual(raised.exception.message, launcher.TIMEOUT_MESSAGE)
+        self.assertIn(launcher.TIMEOUT_MESSAGE, stream.getvalue())
+        self.assertTrue(session.restart_required)
+        self.assertEqual(bootstrap.uninstalled, 1)
+        with mock.patch.object(launcher, "_worker_factory") as factory:
+            with self.assertRaises(launcher.LauncherError) as refused:
+                launcher.start(checkout=self.checkout)
+        self.assertEqual(refused.exception.category, "restart_required")
+        factory.assert_not_called()
+
+    def test_reaped_timeout_reports_timeout_without_locking_session(self):
+        result = launcher._failure("timeout", launcher.TIMEOUT_MESSAGE)
+        bridge_patch, worker_patch, update_patch = self._patch(result)
+        with bridge_patch, worker_patch, update_patch:
+            launcher.start(checkout=self.checkout)
+            self.worker.run_target()
+            with self.assertRaises(launcher.LauncherError) as raised:
+                self.bridge.deliver()
+        self.assertEqual(raised.exception.category, "timeout")
+        self.assertEqual(raised.exception.message, launcher.TIMEOUT_MESSAGE)
+        self.assertFalse(sys.modules[launcher.SESSION_MODULE_NAME].restart_required)
+
 
 # ---------------------------------------------------------------------------
 # Standalone .ms embedded bootstrap tests
@@ -1123,33 +1307,225 @@ class EmbeddedLauncherTests(unittest.TestCase):
         ast.parse(embedded)
         self.assertTrue(embedded.strip().endswith("_schedule()"))
 
-    def test_embedded_clone_handoff_uses_queued_fake_bridge(self):
-        namespace = self._embedded_namespace()
-        namespace["CHECKOUT"] = self.checkout
-        calls = []
-        namespace["_clone_result"] = lambda: {
-            "ok": True,
-            "head": SHA_ONE,
-            "message": "cloned",
-        }
-        namespace["_invoke_companion"] = lambda: calls.append("companion")
-        namespace["_alias_loaded"] = lambda: False
+    def _schedule_with_fakes(self, namespace):
         bridge = FakeBridge()
-        worker_holder = {}
+        holder: dict = {}
 
         def worker_factory(target, bridge_object):
             worker = FakeWorker(target, bridge_object)
-            worker_holder["worker"] = worker
+            holder["worker"] = worker
             return worker
 
-        session = namespace["_session"]()
         namespace["_schedule"](
             bridge_factory=lambda handler: (bridge.completed.connect(handler), bridge)[1],
             worker_factory=worker_factory,
         )
+        return bridge, holder["worker"]
+
+    def test_embedded_messages_match_companion(self):
+        namespace = self._embedded_namespace()
+        for name in (
+            "RESTART_MESSAGE",
+            "TIMEOUT_MESSAGE",
+            "DIRTY_MESSAGE",
+            "BRANCH_MESSAGE",
+            "ORIGIN_MESSAGE",
+            "TOP_LEVEL_MESSAGE",
+            "GIT_OPERATION_MESSAGE",
+            "LAYOUT_MESSAGE",
+            "GIT_FAILED_MESSAGE",
+            "MISSING_GIT_MESSAGE",
+            "TARGET_EXISTS_MESSAGE",
+            "PARTIAL_CLONE_MESSAGE",
+            "AUTH_MESSAGE",
+            "NETWORK_MESSAGE",
+            "DUPLICATE_MESSAGE",
+            "NO_QT_MESSAGE",
+            "MAIN_THREAD_MESSAGE",
+        ):
+            self.assertEqual(namespace[name], getattr(launcher, name), name)
+
+    def test_embedded_existing_checkout_is_validated_before_companion(self):
+        write_checkout(self.checkout)
+        write_companion(self.checkout)
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        calls: list = []
+        namespace["_run_git"] = embedded_git_stub(
+            embedded_checkout_responses(self.checkout, SHA_ONE)
+        )
+        namespace["_invoke_companion"] = lambda: calls.append("companion")
+        session = namespace["_session"]()
+        bridge, worker = self._schedule_with_fakes(namespace)
         self.assertTrue(session.in_flight)
         self.assertEqual(calls, [])
-        worker = worker_holder["worker"]
+        result = worker.run_target()
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["action"], "existing")
+        self.assertEqual(result["head"], SHA_ONE)
+        # Validation ran in the worker; the companion waits for the callback.
+        self.assertEqual(calls, [])
+        bridge.deliver()
+        self.assertEqual(calls, ["companion"])
+        self.assertFalse(session.in_flight)
+
+    def test_embedded_dirty_checkout_never_executes_companion(self):
+        write_checkout(self.checkout)
+        write_companion(self.checkout)
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        responses = embedded_checkout_responses(self.checkout, SHA_ONE)
+        responses[("status", "--porcelain=v1", "--untracked-files=all")] = "?? new.py\n"
+        calls: list = []
+        namespace["_run_git"] = embedded_git_stub(responses, calls)
+        session = namespace["_session"]()
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            bridge, worker = self._schedule_with_fakes(namespace)
+            result = worker.run_target()
+            bridge.deliver()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["category"], "dirty_tree")
+        self.assertIn(
+            ("status", "--porcelain=v1", "--untracked-files=all"), calls
+        )
+        self.assertFalse((self.checkout / "tools" / "companion-ran.flag").exists())
+        self.assertIn(launcher.DIRTY_MESSAGE, stream.getvalue())
+        self.assertFalse(session.restart_required)
+
+    def test_embedded_untrusted_origin_never_executes_companion(self):
+        write_checkout(self.checkout)
+        write_companion(self.checkout)
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        responses = embedded_checkout_responses(self.checkout, SHA_ONE)
+        responses[("remote", "get-url", "origin")] = "git@example.com:other/repo.git"
+        namespace["_run_git"] = embedded_git_stub(responses)
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            bridge, worker = self._schedule_with_fakes(namespace)
+            result = worker.run_target()
+            bridge.deliver()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["category"], "wrong_origin")
+        self.assertFalse((self.checkout / "tools" / "companion-ran.flag").exists())
+        self.assertIn(launcher.ORIGIN_MESSAGE, stream.getvalue())
+
+    def test_embedded_in_progress_git_operation_is_refused(self):
+        write_checkout(self.checkout)
+        write_companion(self.checkout)
+        git_dir = self.checkout / ".git"
+        git_dir.mkdir()
+        (git_dir / "rebase-merge").mkdir()
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        namespace["_run_git"] = embedded_git_stub(
+            embedded_checkout_responses(self.checkout, SHA_ONE)
+        )
+        bridge, worker = self._schedule_with_fakes(namespace)
+        result = worker.run_target()
+        bridge.deliver()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["category"], "git_operation")
+        self.assertFalse((self.checkout / "tools" / "companion-ran.flag").exists())
+
+    def test_embedded_untrusted_layout_branch_and_sha_are_refused(self):
+        cases = [
+            (("rev-parse", "--show-toplevel"), str(self.temp), "wrong_top_level"),
+            (("rev-parse", "--is-bare-repository"), "true", "checkout_layout"),
+            (
+                ("symbolic-ref", "--quiet", "--short", "HEAD"),
+                (1, "", "detached"),
+                "detached_head",
+            ),
+            (("symbolic-ref", "--quiet", "--short", "HEAD"), "main", "wrong_branch"),
+            (("rev-parse", "HEAD"), "abc123", "checkout_layout"),
+        ]
+        for key, value, category in cases:
+            with self.subTest(category=category):
+                sys.modules.pop(launcher.SESSION_MODULE_NAME, None)
+                write_checkout(self.checkout)
+                write_companion(self.checkout)
+                namespace = self._embedded_namespace()
+                namespace["CHECKOUT"] = self.checkout
+                responses = embedded_checkout_responses(self.checkout, SHA_ONE)
+                responses[key] = value
+                namespace["_run_git"] = embedded_git_stub(responses)
+                bridge, worker = self._schedule_with_fakes(namespace)
+                result = worker.run_target()
+                bridge.deliver()
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["category"], category)
+                self.assertFalse(
+                    (self.checkout / "tools" / "companion-ran.flag").exists()
+                )
+
+    def test_embedded_changed_checkout_retires_ui_without_running_companion(self):
+        write_checkout(self.checkout)
+        write_companion(self.checkout)
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        namespace["_run_git"] = embedded_git_stub(
+            embedded_checkout_responses(self.checkout, SHA_TWO)
+        )
+        session = namespace["_session"]()
+        bootstrap = FakeBootstrap()
+        session.checkout_root = str(self.checkout)
+        session.loaded_head_sha = SHA_ONE
+        session.bootstrap = bootstrap
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            bridge, worker = self._schedule_with_fakes(namespace)
+            worker.run_target()
+            bridge.deliver()
+        self.assertTrue(session.restart_required)
+        self.assertEqual(bootstrap.uninstalled, 1)
+        self.assertIsNone(session.bootstrap)
+        self.assertFalse((self.checkout / "tools" / "companion-ran.flag").exists())
+        self.assertIn(launcher.RESTART_MESSAGE, stream.getvalue())
+        with self.assertRaises(RuntimeError) as raised:
+            namespace["_schedule"](
+                bridge_factory=lambda handler: FakeBridge(),
+                worker_factory=lambda target, bridge: FakeWorker(target, bridge),
+            )
+        self.assertIn(launcher.RESTART_MESSAGE, str(raised.exception))
+
+    def test_embedded_matching_loaded_sha_reuses_companion(self):
+        write_checkout(self.checkout)
+        write_companion(self.checkout)
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        namespace["_run_git"] = embedded_git_stub(
+            embedded_checkout_responses(self.checkout, SHA_ONE)
+        )
+        calls: list = []
+        namespace["_invoke_companion"] = lambda: calls.append("companion")
+        session = namespace["_session"]()
+        session.loaded_head_sha = SHA_ONE
+        bridge, worker = self._schedule_with_fakes(namespace)
+        worker.run_target()
+        bridge.deliver()
+        self.assertEqual(calls, ["companion"])
+        self.assertFalse(session.restart_required)
+
+    def test_embedded_clone_handoff_uses_queued_fake_bridge(self):
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        namespace["_update_result"] = lambda: {
+            "ok": True,
+            "action": "clone",
+            "head": SHA_ONE,
+            "message": "cloned",
+        }
+        companion = self.temp / "companion.py"
+        companion.write_text("", encoding="utf-8")
+        namespace["_companion_path"] = lambda: companion
+        calls: list = []
+        namespace["_invoke_companion"] = lambda: calls.append("companion")
+        session = namespace["_session"]()
+        bridge, worker = self._schedule_with_fakes(namespace)
+        self.assertTrue(session.in_flight)
+        self.assertEqual(calls, [])
         self.assertTrue(worker.started)
         worker.run_target()
         self.assertEqual(calls, [])
@@ -1159,6 +1535,91 @@ class EmbeddedLauncherTests(unittest.TestCase):
         self.assertFalse(session.in_flight)
         self.assertIsNone(session.bridge)
         self.assertIsNone(session.worker)
+
+    def test_embedded_unreaped_timeout_locks_session_after_callback(self):
+        write_checkout(self.checkout)
+        write_companion(self.checkout)
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        timeout_error = namespace["_GitTimeout"](False)
+        namespace["_run_git"] = embedded_git_stub(
+            {("rev-parse", "--show-toplevel"): timeout_error}
+        )
+        session = namespace["_session"]()
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            bridge, worker = self._schedule_with_fakes(namespace)
+            result = worker.run_target()
+            bridge.deliver()
+        self.assertEqual(result["category"], "timeout")
+        self.assertEqual(result["message"], launcher.TIMEOUT_MESSAGE)
+        self.assertTrue(result["unreaped"])
+        self.assertTrue(session.restart_required)
+        self.assertIn(launcher.TIMEOUT_MESSAGE, stream.getvalue())
+        self.assertFalse((self.checkout / "tools" / "companion-ran.flag").exists())
+
+    def test_embedded_timeout_kills_tree_on_posix(self):
+        namespace = self._embedded_namespace()
+        process = ReapingProcess()
+        observed: dict = {}
+        killpg = mock.Mock()
+        namespace["_is_windows"] = lambda: False
+
+        def fake_popen(command, **kwargs):
+            observed.update(kwargs)
+            return process
+
+        with mock.patch.object(namespace["shutil"], "which", return_value="git"), \
+                mock.patch.object(namespace["os"], "getpgid", return_value=4321), \
+                mock.patch.object(namespace["os"], "killpg", killpg), \
+                mock.patch.object(namespace["subprocess"], "Popen", fake_popen):
+            with self.assertRaises(namespace["_GitTimeout"]) as raised:
+                namespace["_run_git"](["fetch"], self.checkout, 1)
+        self.assertTrue(raised.exception.reaped)
+        killpg.assert_called_once_with(4321, namespace["signal"].SIGKILL)
+        self.assertTrue(observed["start_new_session"])
+
+    def test_embedded_timeout_kills_tree_on_windows(self):
+        namespace = self._embedded_namespace()
+        process = ReapingProcess()
+        observed: dict = {}
+        run_calls: list = []
+        namespace["_is_windows"] = lambda: True
+
+        def fake_popen(command, **kwargs):
+            observed.update(kwargs)
+            return process
+
+        def fake_run(command, **kwargs):
+            run_calls.append((command, kwargs))
+            return SimpleNamespace(returncode=0)
+
+        with mock.patch.object(namespace["shutil"], "which", return_value="git"), \
+                mock.patch.object(namespace["subprocess"], "Popen", fake_popen), \
+                mock.patch.object(namespace["subprocess"], "run", fake_run):
+            with self.assertRaises(namespace["_GitTimeout"]) as raised:
+                namespace["_run_git"](["fetch"], self.checkout, 1)
+        self.assertTrue(raised.exception.reaped)
+        command, kwargs = run_calls[0]
+        self.assertEqual(command, ["taskkill", "/F", "/T", "/PID", "4321"])
+        self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(kwargs["creationflags"], 0x08000000)
+        self.assertNotIn("start_new_session", observed)
+
+    def test_embedded_unreaped_tree_closes_pipes_and_reports_timeout(self):
+        namespace = self._embedded_namespace()
+        process = ReapingProcess(reaped=False)
+        namespace["_is_windows"] = lambda: False
+        with mock.patch.object(namespace["shutil"], "which", return_value="git"), \
+                mock.patch.object(namespace["os"], "getpgid", return_value=4321), \
+                mock.patch.object(namespace["os"], "killpg", mock.Mock()), \
+                mock.patch.object(namespace["subprocess"], "Popen", lambda *a, **k: process):
+            with self.assertRaises(namespace["_GitTimeout"]) as raised:
+                namespace["_run_git"](["fetch"], self.checkout, 1)
+        self.assertFalse(raised.exception.reaped)
+        self.assertEqual(str(raised.exception), launcher.TIMEOUT_MESSAGE)
+        self.assertEqual(process.closed, ["stdout", "stderr"])
+        self.assertGreaterEqual(process.waited, 1)
 
     def test_embedded_refuses_off_main_thread(self):
         namespace = self._embedded_namespace()

@@ -408,3 +408,68 @@ audit are reported in the external maintainer handoff, not rewritten here.
 Windows Git transport, live GitHub clone/update from Max, Qt thread affinity in
 Max, native geometry, undo grouping, viewport focus, and DPI. The ZIP is a
 source archive, not a host or Windows delivery test.
+
+## Launcher Cycle 1 fixes: checkout trust before companion and Git process-tree timeout (2026-11-11)
+
+This additive section covers only two High findings raised against commit
+`3f24a0b`. It does not relabel any earlier count and does not promote native
+runtime state.
+
+**Finding 1 — an existing companion ran before checkout validation.** The
+standalone `.ms` bootstrap called `runpy.run_path` on
+`tools/max_pull_and_load.py` on the main thread whenever that file existed, so
+changed on-disk companion code could execute before the checkout's trust was
+established. The embedded bootstrap now schedules a worker that performs the
+same bounded local checks as the Python companion — Git top-level equals the
+checkout root, non-bare repository, `origin` equals `REPO_URL`, branch `dev`,
+no in-progress merge/rebase/cherry-pick/sequencer, empty
+`--porcelain=v1 --untracked-files=all` status, and a full hexadecimal HEAD —
+and only the queued main-thread callback invokes the companion. A dirty,
+untrusted, or in-progress checkout is refused before the companion file is
+read. If the session already loaded a different SHA, the old UI/bootstrap is
+retired (`uninstall()` once) and the run stops with the restart message
+instead of executing the updated companion against the loaded code.
+
+**Finding 2 — a timed-out Git child tree could survive.** Killing only the
+immediate `git` process let spawned helpers (`git-remote-https`,
+`git-credential-manager`, ...) survive and keep the captured stdout/stderr
+pipes open, and a suppressed second `communicate` timeout could report
+completion while a child still mutated the checkout. Both the Python companion
+and the embedded bootstrap now terminate the whole tree on timeout — bounded
+`taskkill /F /T /PID <pid>` with `CREATE_NO_WINDOW` and `stdin=DEVNULL` on
+Windows, `start_new_session=True` plus `os.killpg(pid, SIGKILL)` on POSIX —
+then close pipes and reap with a bounded `wait`. Only a confirmed reap returns
+the ordinary `timeout` result; otherwise the timeout message is still returned
+but the session is marked restart-required (and the trusted bootstrap retired)
+so no retry can race a surviving helper. `tools/max_pull_and_load.ms` was
+regenerated from `render_ms_source()`.
+
+Regression coverage in `tests/test_pull_and_load.py` grew from 45 to **63**
+cases (18 added). New cases cover: worker validation before the companion for
+existing checkouts, dirty/top-level/bare/detached/wrong-branch/wrong-origin/
+in-progress/full-SHA refusals with a companion stub that records execution,
+changed-SHA retirement without running the updated companion, matching-SHA
+reuse, and unreaped-timeout session locking in the embedded bootstrap; plus
+Windows `taskkill` and POSIX `killpg` tree termination, pipe closure, bounded
+reap, `start_new_session`/`CREATE_NO_WINDOW` process options, and unreaped
+`_run_git` propagation in the companion.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Launcher regression suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest max2025_menu_prototype.tests.test_pull_and_load -v` | **63 tests, OK** |
+| Portable suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest max2025_menu_prototype.tests.test_portable -v` | **25 tests, OK** |
+| Aggregate stdlib suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s max2025_menu_prototype/tests -p 'test_*.py' -v` | **375 tests, OK, 12 skipped** (11 `test_native_ui` Qt skips + 1 optional `qt_ui` module skip) |
+| Copied `3dsModeler`-named checkout suite | same discovery inside a copied `3dsModeler/` directory with a `max2025_menu_prototype` package alias | **375 tests, OK, 12 skipped** |
+| Extracted-ZIP suite | same discovery inside the built archive's extracted `max2025_menu_prototype/` root | **375 tests, OK, 12 skipped** |
+| Python 3.11 AST + compile | `ast.parse(..., feature_version=(3, 11))` and `compile()` over all **43** prototype `*.py` files | **OK**, no bytecode written |
+| Deterministic ZIP | `python3 -m max2025_menu_prototype.tools.portable --source <copy> --output <artifact>/max2025_menu_prototype.zip` twice | **59 members; identical SHA-256 on repeat** |
+| Whitespace | `git diff --check` | **OK** |
+| Protected baseline | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m max2025_menu_prototype.tools.baseline verify --manifest "$BASELINE_MANIFEST"` | **293 protected entries unchanged** |
+
+Archive member inventory, both ZIP hashes, extraction import, and the remote
+push audit stay in the external maintainer handoff rather than in this file.
+
+**Still NOT RUN for these fixes:** MAXScript parsing/execution in Max, Max's
+Python bridge, real Windows `taskkill`/Git transport behaviour, live
+clone/update from Max, and Qt queued delivery inside Max. The Windows and POSIX
+process paths are simulated in tests only.
