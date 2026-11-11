@@ -473,3 +473,77 @@ push audit stay in the external maintainer handoff rather than in this file.
 Python bridge, real Windows `taskkill`/Git transport behaviour, live
 clone/update from Max, and Qt queued delivery inside Max. The Windows and POSIX
 process paths are simulated in tests only.
+
+## Launcher Cycle 2 fixes: remote ancestry, companion byte trust, and tree-kill proof (2026-11-11)
+
+This additive section covers the three High findings from the re-review of
+`53269c3`. It does not relabel any earlier count and does not promote native
+runtime state.
+
+**Finding 1 — local trust alone still let an unpushed commit execute its own
+companion.** `origin` + `dev` + a clean tree proved nothing about remote
+ancestry, and `runpy.run_path` re-read the file from disk after validation.
+The embedded bootstrap now, in its worker: (a) refuses a checkout whose HEAD
+differs from `_session().loaded_head_sha` immediately, before any network call;
+(b) otherwise runs `git fetch --no-tags origin dev`, resolves
+`refs/remotes/origin/dev`, and requires `git merge-base --is-ancestor <head>
+<remote>` so local-ahead, diverged, or unrelated commits are refused before the
+companion file is ever read — and refuses with `restart_required` when a loaded
+session's SHA no longer matches the remote; (c) derives the trusted companion
+digest from the commit itself with `git cat-file -p <head>:tools/max_pull_and_load.py`
+(plus a `git cat-file --filters` digest so a CRLF/filter checkout still matches
+its committed bytes). The main thread reads the file bytes once, checks
+SHA-256 against that commit-derived digest, and only then runs
+`exec(compile(data, path, "exec"), namespace)`; a mismatch retires the old UI
+and latches restart-required. `runpy.run_path` is no longer used for the
+checkout companion.
+
+**Finding 2 — a failed tree kill could still be reported as a successful
+reap.** Reaping the immediate child was treated as proof the whole tree had
+stopped. Timeout handling now requires positive evidence: on Windows,
+`taskkill /F /T /PID <pid>` must complete inside the deadline with
+`returncode == 0` (any error, timeout, or non-zero result means the tree is not
+confirmed); on POSIX, the child is a session leader (`start_new_session=True`),
+`os.killpg(pgid, SIGKILL)` is only issued when `pgid == pid`, and the group is
+polled with `os.killpg(pgid, 0)` until `ProcessLookupError` within the deadline.
+`tree_reaped` is true only when both the immediate child is reaped and the tree
+is proven gone.
+
+**Finding 3 — timeout paths discarded `tree_reaped=False`.** The
+`--absolute-git-dir` probe no longer swallows `LauncherError`, partial-clone and
+pre-pull revalidation paths preserve `exc.tree_reaped`, and both workers track a
+sticky `unreaped` flag: a `tree_reaped=False` from any subprocess call in the
+run forces `unreaped=True` in the worker result even if an inner handler
+converted the error, so the main thread latches `restart_required`. The
+actionable timeout message is still returned unchanged.
+
+Regression coverage in `tests/test_pull_and_load.py` grew from 63 to **79**
+cases (16 added): local-ahead/unrelated-commit refusal and no-network drift
+refusal in the embedded worker, loaded-SHA remote move retires without running
+the companion, verified-byte execution (asserting `cat-file -p
+<head>:tools/max_pull_and_load.py`), commit-digest mismatch and post-validation
+disk swap both blocking execution, CRLF filter digest acceptance, POSIX
+surviving-group and `killpg`-failure non-confirmation, foreign-group refusal,
+Windows `taskkill` non-zero/error non-confirmation, sticky unreaped after an
+inner handler swallowed the error, and operation-probe/partial-clone
+`tree_reaped` preservation.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Launcher regression suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest max2025_menu_prototype.tests.test_pull_and_load -v` | **79 tests, OK** |
+| Portable suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest max2025_menu_prototype.tests.test_portable -v` | **25 tests, OK** |
+| Aggregate stdlib suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s max2025_menu_prototype/tests -p 'test_*.py' -v` | **391 tests, OK, 12 skipped** (11 `test_native_ui` Qt skips + 1 optional `qt_ui` module skip) |
+| Copied `3dsModeler`-named checkout suite | same discovery inside a copied `3dsModeler/` directory with a `max2025_menu_prototype` package alias | **391 tests, OK, 12 skipped** |
+| Extracted-ZIP suite | same discovery inside the built archive's extracted `max2025_menu_prototype/` root | **391 tests, OK, 12 skipped** |
+| Python 3.11 AST + compile | `ast.parse(..., feature_version=(3, 11))` and `compile()` over all **43** prototype `*.py` files | **OK**, no bytecode written |
+| Deterministic ZIP | `python3 -m max2025_menu_prototype.tools.portable --source <copy> --output <artifact>/max2025_menu_prototype.zip` twice | **59 members; identical SHA-256 on repeat** |
+| Whitespace | `git diff --check` | **OK** |
+| Protected baseline | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m max2025_menu_prototype.tools.baseline verify --manifest "$BASELINE_MANIFEST"` | **293 protected entries unchanged** |
+
+Archive member inventory, both ZIP hashes, extraction import, and the remote
+push audit stay in the external maintainer handoff rather than in this file.
+
+**Still NOT RUN for these fixes:** MAXScript parsing/execution in Max, Max's
+Python bridge, real Windows `taskkill`/Git transport and CRLF checkout
+behaviour, live clone/update from Max, and Qt queued delivery inside Max. The
+Windows and POSIX process paths are simulated in tests only.

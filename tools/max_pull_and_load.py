@@ -47,6 +47,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import types
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -75,7 +76,32 @@ NETWORK_GIT_TIMEOUT = 120.0
 _MAX_CAPTURED_BYTES = 65536
 # Bounded grace period for terminating and reaping a timed-out Git tree.
 _KILL_WAIT = 5.0
+_REAP_POLL = 0.05
 _HEX_SHA = re.compile(r"^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$")
+
+_TREE_REAP_STATE = threading.local()
+
+
+def _begin_tree_reap_tracking() -> None:
+    """Start one worker run with no recorded unreaped tree."""
+
+    _TREE_REAP_STATE.unreaped = False
+
+
+def _mark_tree_unreaped() -> None:
+    """Sticky record: any unconfirmed tree kill poisons the whole run."""
+
+    _TREE_REAP_STATE.unreaped = True
+
+
+def _tree_reap_unreaped() -> bool:
+    return bool(getattr(_TREE_REAP_STATE, "unreaped", False))
+
+
+def _end_tree_reap_tracking() -> bool:
+    unreaped = _tree_reap_unreaped()
+    _TREE_REAP_STATE.unreaped = False
+    return unreaped
 
 REQUIRED_ROOT_ENTRIES = (
     "__init__.py",
@@ -430,41 +456,82 @@ def _reap(process: subprocess.Popen) -> bool:
         return process.poll() is not None
 
 
+def _wait_group_gone(pgid: int) -> bool:
+    """Poll until no process in ``pgid`` remains, within ``_KILL_WAIT``."""
+
+    deadline = time.monotonic() + _KILL_WAIT
+    while True:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return True
+        except OSError:
+            return False
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_REAP_POLL)
+
+
 def _terminate_tree(process: subprocess.Popen) -> bool:
-    """Terminate the whole Git process tree and confirm it was reaped.
+    """Terminate the whole Git process tree; True only when proven stopped.
 
     Killing only the immediate ``git`` process lets spawned Windows transport
     helpers (``git-remote-https``, ``git-credential-manager``, ...) survive and
-    keep stdout/stderr open.  ``taskkill /T`` ends that tree on Windows and a
-    signal to the process group does the same on POSIX.
+    keep stdout/stderr open.  A confirmed tree kill requires a successful
+    ``taskkill /T`` on Windows, or a POSIX process-group kill followed by a
+    bounded poll that proves the group is gone.  Reaping the immediate child is
+    never treated as proof of the whole tree.
     """
 
     pid = getattr(process, "pid", None)
-    if pid is not None:
-        if _is_windows():
-            try:
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(pid)],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    shell=False,
-                    creationflags=_creation_flags(),
-                    timeout=_KILL_WAIT,
-                    check=False,
-                )
-            except Exception:
-                pass
+    windows = _is_windows()
+    tree_confirmed = False
+    pgid: Optional[int] = None
+    if pid is None:
+        tree_confirmed = False
+    elif windows:
+        try:
+            completed = subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=False,
+                creationflags=_creation_flags(),
+                timeout=_KILL_WAIT,
+                check=False,
+            )
+            tree_confirmed = getattr(completed, "returncode", None) == 0
+        except Exception:
+            tree_confirmed = False
+    else:
+        try:
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:
+            tree_confirmed = True
+        except Exception:
+            tree_confirmed = False
         else:
-            try:
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
-            except Exception:
-                pass
+            if pgid != pid:
+                # Never signal a group we did not create: without
+                # start_new_session the group could belong to Max itself.
+                tree_confirmed = False
+            else:
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                    tree_confirmed = True
+                except ProcessLookupError:
+                    tree_confirmed = True
+                except Exception:
+                    tree_confirmed = False
     try:
         process.kill()
     except Exception:
         pass
-    return _reap(process)
+    reaped = _reap(process)
+    if not windows and pgid is not None and tree_confirmed:
+        tree_confirmed = _wait_group_gone(pgid)
+    return bool(reaped and tree_confirmed)
 
 
 def _git_environment() -> dict[str, str]:
@@ -520,6 +587,8 @@ def _run_git(
         stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         reaped = _terminate_tree(process)
+        if not reaped:
+            _mark_tree_unreaped()
         raise LauncherError(
             TIMEOUT_MESSAGE, "timeout", tree_reaped=reaped
         ) from None
@@ -599,12 +668,15 @@ _EXPECTED_REMOTE = _normalize_remote(REPO_URL)
 
 
 def _git_operation_in_progress(checkout: Path) -> bool:
-    try:
-        git_dir = Path(
-            _git_stdout(["rev-parse", "--absolute-git-dir"], cwd=checkout)
-        )
-    except LauncherError:
-        return False
+    """Check for an in-progress Git operation without swallowing failures.
+
+    A swallowed ``LauncherError`` here could discard a ``tree_reaped=False``
+    timeout and let the update continue against a live Git child.
+    """
+
+    git_dir = Path(
+        _git_stdout(["rev-parse", "--absolute-git-dir"], cwd=checkout)
+    )
     for name in (
         "MERGE_HEAD",
         "CHERRY_PICK_HEAD",
@@ -680,7 +752,9 @@ def _clone_checkout(checkout: Path) -> str:
     try:
         return _validate_checkout(checkout)["head"]
     except LauncherError as exc:
-        raise LauncherError(PARTIAL_CLONE_MESSAGE, "partial_clone") from exc
+        raise LauncherError(
+            PARTIAL_CLONE_MESSAGE, "partial_clone", tree_reaped=exc.tree_reaped
+        ) from exc
 
 
 def _fetch_origin_dev(checkout: Path) -> None:
@@ -748,7 +822,7 @@ def _failure(category: str, message: str, *, unreaped: bool = False) -> dict[str
     )
 
 
-def _worker_update(
+def _worker_update_locked(
     checkout: Path,
     expected_handoff: Optional[str],
     loaded_sha: Optional[str],
@@ -829,7 +903,9 @@ def _worker_update(
         try:
             revalidated = _validate_checkout(checkout)["head"]
         except LauncherError as exc:
-            return _failure(exc.category, exc.message)
+            return _failure(
+                exc.category, exc.message, unreaped=not exc.tree_reaped
+            )
         if revalidated != before:
             return _failure(
                 "checkout_changed",
@@ -860,6 +936,38 @@ def _worker_update(
             "The launcher stopped after an unexpected local failure. No retry "
             "was attempted.",
         )
+
+
+def _worker_update(
+    checkout: Path,
+    expected_handoff: Optional[str],
+    loaded_sha: Optional[str],
+    loaded_root: Optional[str],
+    modules_loaded: bool,
+) -> dict[str, Any]:
+    """Run one update decision and fold in sticky unreaped-tree state.
+
+    Any Git timeout whose tree could not be confirmed stopped — including one
+    converted to a failure by an inner handler — forces ``unreaped`` so the
+    main thread latches ``restart_required`` instead of racing a survivor.
+    """
+
+    _begin_tree_reap_tracking()
+    try:
+        result = _worker_update_locked(
+            checkout, expected_handoff, loaded_sha, loaded_root, modules_loaded
+        )
+    except LauncherError as exc:
+        result = _failure(exc.category, exc.message, unreaped=not exc.tree_reaped)
+    except Exception:
+        result = _failure(
+            "internal",
+            "The launcher stopped after an unexpected local failure. No retry "
+            "was attempted.",
+        )
+    if _end_tree_reap_tracking():
+        result["unreaped"] = True
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1162,13 +1270,14 @@ def start(*, checkout: Path = DEFAULT_CHECKOUT) -> None:
 
 EMBEDDED_PYTHON = r'''
 import base64
+import hashlib
 import os
-import runpy
 import shutil
 import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 PACKAGE_NAME = "max2025_menu_prototype"
@@ -1180,7 +1289,9 @@ SESSION_SCHEMA_VERSION = 1
 LOCAL_GIT_TIMEOUT = 15.0
 NETWORK_GIT_TIMEOUT = 120.0
 _KILL_WAIT = 5.0
+_REAP_POLL = 0.05
 _MAX_CAPTURED_BYTES = 65536
+_MAX_COMPANION_BYTES = 4 * 1024 * 1024
 RESTART_MESSAGE = "Checkout updated; restart 3ds Max before loading this commit."
 NO_QT_MESSAGE = "Start 3ds Max 2025 before running the launcher; its Qt application was not found."
 MAIN_THREAD_MESSAGE = "The launcher must run on the 3ds Max main thread."
@@ -1198,11 +1309,14 @@ BRANCH_MESSAGE = "The checkout is not on the dev branch. Repair it outside Max."
 ORIGIN_MESSAGE = "The checkout origin is not the expected HTTPS repository. Repair it outside Max."
 TOP_LEVEL_MESSAGE = "The Git top-level is not the checkout directory. Repair it outside Max."
 GIT_OPERATION_MESSAGE = "A Git merge, rebase, cherry-pick, or sequencer operation is in progress. Finish or abort it outside Max."
+DIVERGED_MESSAGE = "The local dev branch is ahead of or diverged from origin/dev. Refusing to discard local commits."
 COMPANION_MESSAGE = "The launcher companion is missing from the checkout. Repair it outside Max."
+COMPANION_CHANGED_MESSAGE = "The launcher companion changed after validation. Restart 3ds Max before retrying."
 COMPANION_FAILED_MESSAGE = "The launcher companion failed to start. Restart 3ds Max and retry."
 
 _REQUIRED = ("__init__.py", "core", "max_host", "qt_ui", "core/default_profile.json")
 _HEX = "0123456789abcdefABCDEF"
+_REAP_STATE = {"unreaped": False}
 
 
 def _emit(message):
@@ -1285,6 +1399,15 @@ class _GitTimeout(Exception):
         self.reaped = reaped
 
 
+class _CompanionChanged(Exception):
+    pass
+
+
+def _note_timeout_reaped(reaped):
+    if not reaped:
+        _REAP_STATE["unreaped"] = True
+
+
 def _reap(process):
     try:
         process.communicate(timeout=_KILL_WAIT)
@@ -1309,41 +1432,78 @@ def _reap(process):
         return process.poll() is not None
 
 
+def _wait_group_gone(pgid):
+    deadline = time.monotonic() + _KILL_WAIT
+    while True:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return True
+        except OSError:
+            return False
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_REAP_POLL)
+
+
 def _terminate_tree(process):
     pid = getattr(process, "pid", None)
-    if pid is not None:
-        if _is_windows():
-            try:
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(pid)],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    shell=False,
-                    creationflags=_creation_flags(),
-                    timeout=_KILL_WAIT,
-                    check=False,
-                )
-            except Exception:
-                pass
+    windows = _is_windows()
+    tree_confirmed = False
+    pgid = None
+    if pid is None:
+        tree_confirmed = False
+    elif windows:
+        try:
+            completed = subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=False,
+                creationflags=_creation_flags(),
+                timeout=_KILL_WAIT,
+                check=False,
+            )
+            tree_confirmed = getattr(completed, "returncode", None) == 0
+        except Exception:
+            tree_confirmed = False
+    else:
+        try:
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:
+            tree_confirmed = True
+        except Exception:
+            tree_confirmed = False
         else:
-            try:
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
-            except Exception:
-                pass
+            if pgid != pid:
+                # Never signal a group we did not create: without
+                # start_new_session the group could belong to Max itself.
+                tree_confirmed = False
+            else:
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                    tree_confirmed = True
+                except ProcessLookupError:
+                    tree_confirmed = True
+                except Exception:
+                    tree_confirmed = False
     try:
         process.kill()
     except Exception:
         pass
-    return _reap(process)
+    reaped = _reap(process)
+    if not windows and pgid is not None and tree_confirmed:
+        tree_confirmed = _wait_group_gone(pgid)
+    return bool(reaped and tree_confirmed)
 
 
-def _run_git(args, cwd, timeout):
+def _spawn(args, cwd):
     executable = shutil.which("git")
     if not executable:
         raise _GitFailure(MISSING_GIT_MESSAGE, "missing_git")
     try:
-        process = subprocess.Popen(
+        return subprocess.Popen(
             [executable, *[str(item) for item in args]],
             cwd=str(cwd),
             stdin=subprocess.DEVNULL,
@@ -1355,13 +1515,29 @@ def _run_git(args, cwd, timeout):
         )
     except OSError:
         raise _GitFailure(GIT_FAILED_MESSAGE, "git_failed") from None
+
+
+def _capture(process, timeout):
     try:
-        stdout, stderr = process.communicate(timeout=timeout)
+        return process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        raise _GitTimeout(_terminate_tree(process)) from None
+        reaped = _terminate_tree(process)
+        _note_timeout_reaped(reaped)
+        raise _GitTimeout(reaped) from None
     except OSError:
         raise _GitFailure(GIT_FAILED_MESSAGE, "git_failed") from None
+
+
+def _run_git(args, cwd, timeout):
+    process = _spawn(args, cwd)
+    stdout, stderr = _capture(process, timeout)
     return (process.returncode, _bounded(stdout), _bounded(stderr))
+
+
+def _run_git_bytes(args, cwd, timeout):
+    process = _spawn(args, cwd)
+    stdout, stderr = _capture(process, timeout)
+    return (process.returncode, stdout or b"", _bounded(stderr))
 
 
 def _classify(stderr, stdout):
@@ -1418,10 +1594,7 @@ def _full_sha(value):
 
 
 def _operation_in_progress(root):
-    try:
-        git_dir = Path(_git_stdout(["rev-parse", "--absolute-git-dir"], root))
-    except _GitFailure:
-        return False
+    git_dir = Path(_git_stdout(["rev-parse", "--absolute-git-dir"], root))
     for name in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD",
                  "rebase-merge", "rebase-apply", "sequencer"):
         if (git_dir / name).exists():
@@ -1494,6 +1667,105 @@ def _head():
     return _full_sha(_git_stdout(["rev-parse", "HEAD"], CHECKOUT))
 
 
+def _fetch_origin_dev():
+    code, stdout, stderr = _run_git(
+        ["fetch", "--no-tags", "origin", BRANCH], CHECKOUT, NETWORK_GIT_TIMEOUT
+    )
+    if code != 0:
+        message, category = _classify(stderr, stdout)
+        raise _GitFailure(message, category)
+
+
+def _remote_dev_sha():
+    value = _git_stdout(
+        ["rev-parse", "--verify", "refs/remotes/origin/dev"], CHECKOUT
+    )
+    return _full_sha(value)
+
+
+def _is_ancestor(ancestor, descendant):
+    code, _stdout, stderr = _run_git(
+        ["merge-base", "--is-ancestor", ancestor, descendant],
+        CHECKOUT,
+        LOCAL_GIT_TIMEOUT,
+    )
+    if code == 0:
+        return True
+    if code == 1:
+        return False
+    message, category = _classify(stderr, _stdout)
+    raise _GitFailure(message, category)
+
+
+def _sha256_bytes(data):
+    if len(data) > _MAX_COMPANION_BYTES:
+        raise _GitFailure(COMPANION_MESSAGE, "companion_invalid")
+    return hashlib.sha256(data).hexdigest()
+
+
+def _companion_digests(head):
+    relative = "tools/max_pull_and_load.py"
+    revision = "%s:%s" % (head, relative)
+    code, blob, _stderr = _run_git_bytes(
+        ["cat-file", "-p", revision], CHECKOUT, LOCAL_GIT_TIMEOUT
+    )
+    if code != 0 or not blob:
+        raise _GitFailure(COMPANION_MESSAGE, "companion_missing")
+    worktree_digest = None
+    code, filtered, _stderr = _run_git_bytes(
+        ["cat-file", "--filters", revision], CHECKOUT, LOCAL_GIT_TIMEOUT
+    )
+    if code == 0 and filtered:
+        worktree_digest = _sha256_bytes(filtered)
+    return _sha256_bytes(blob), worktree_digest
+
+
+def _update_result():
+    _REAP_STATE["unreaped"] = False
+    try:
+        if CHECKOUT.exists():
+            result = _existing_result()
+        else:
+            result = _clone_result()
+        if _REAP_STATE["unreaped"]:
+            result["unreaped"] = True
+        return result
+    except _GitTimeout as exc:
+        _note_timeout_reaped(exc.reaped)
+        return {"ok": False, "message": TIMEOUT_MESSAGE, "category": "timeout",
+                "unreaped": not exc.reaped or _REAP_STATE["unreaped"]}
+    except _GitFailure as exc:
+        return {"ok": False, "message": exc.message, "category": exc.category,
+                "unreaped": _REAP_STATE["unreaped"]}
+    except Exception:
+        return {"ok": False, "message": GIT_FAILED_MESSAGE, "category": "internal",
+                "unreaped": _REAP_STATE["unreaped"]}
+
+
+def _existing_result():
+    session = _session()
+    loaded = session.loaded_head_sha
+    head = _validate_checkout()
+    if loaded is not None and head != loaded:
+        raise _GitFailure(RESTART_MESSAGE, "restart_required")
+    _fetch_origin_dev()
+    if _head() != head:
+        raise _GitFailure(
+            "The checkout changed during the update check. No files were "
+            "modified; retry.",
+            "checkout_changed",
+        )
+    remote = _remote_dev_sha()
+    if not _is_ancestor(head, remote):
+        raise _GitFailure(DIVERGED_MESSAGE, "diverged")
+    if loaded is not None and remote != loaded:
+        raise _GitFailure(RESTART_MESSAGE, "restart_required")
+    blob, worktree = _companion_digests(head)
+    return {"ok": True, "action": "existing", "head": head, "remote_sha": remote,
+            "companion_sha256": blob, "companion_worktree_sha256": worktree,
+            "message": ""}
+
+
 def _clone_result():
     if not shutil.which("git"):
         raise _GitFailure(MISSING_GIT_MESSAGE, "missing_git")
@@ -1515,40 +1787,41 @@ def _clone_result():
         raise _GitFailure(message, category)
     try:
         head = _validate_checkout()
+        remote = _remote_dev_sha()
+        if remote != head:
+            raise _GitFailure(PARTIAL_CLONE_MESSAGE, "partial_clone")
+        blob, worktree = _companion_digests(head)
     except _GitFailure:
         raise _GitFailure(PARTIAL_CLONE_MESSAGE, "partial_clone") from None
-    return {"ok": True, "action": "clone", "head": head,
+    return {"ok": True, "action": "clone", "head": head, "remote_sha": remote,
+            "companion_sha256": blob, "companion_worktree_sha256": worktree,
             "message": "Cloned commit %s." % head[:12]}
-
-
-def _existing_result():
-    head = _validate_checkout()
-    return {"ok": True, "action": "existing", "head": head, "message": ""}
-
-
-def _update_result():
-    try:
-        if CHECKOUT.exists():
-            return _existing_result()
-        return _clone_result()
-    except _GitTimeout as exc:
-        return {"ok": False, "message": TIMEOUT_MESSAGE, "category": "timeout",
-                "unreaped": not exc.reaped}
-    except _GitFailure as exc:
-        return {"ok": False, "message": exc.message, "category": exc.category}
-    except Exception:
-        return {"ok": False, "message": GIT_FAILED_MESSAGE, "category": "internal"}
 
 
 def _companion_path():
     return CHECKOUT / "tools" / "max_pull_and_load.py"
 
 
-def _invoke_companion():
+def _invoke_companion(blob_sha256, worktree_sha256=None):
     path = _companion_path()
-    if not path.is_file():
-        raise RuntimeError(COMPANION_MESSAGE)
-    namespace = runpy.run_path(str(path), run_name="_max2025_pull_and_load_companion")
+    try:
+        data = path.read_bytes()
+    except OSError:
+        raise RuntimeError(COMPANION_MESSAGE) from None
+    if len(data) > _MAX_COMPANION_BYTES:
+        raise _CompanionChanged(COMPANION_CHANGED_MESSAGE)
+    digest = hashlib.sha256(data).hexdigest()
+    expected = tuple(
+        value for value in (blob_sha256, worktree_sha256)
+        if isinstance(value, str) and len(value) == 64
+    )
+    if not expected or digest not in expected:
+        raise _CompanionChanged(COMPANION_CHANGED_MESSAGE)
+    namespace = {
+        "__name__": "_max2025_pull_and_load_companion",
+        "__file__": str(path),
+    }
+    exec(compile(data, str(path), "exec"), namespace)
     starter = namespace.get("start")
     if not callable(starter):
         raise RuntimeError("The launcher companion is incomplete. Restart 3ds Max and re-clone.")
@@ -1582,7 +1855,7 @@ def _after_update(result):
     session.worker = None
     session.bridge = None
     if not result.get("ok"):
-        if result.get("unreaped"):
+        if result.get("unreaped") or result.get("category") == "restart_required":
             session.restart_required = True
             _retire_bootstrap(session)
         _emit(str(result.get("message") or GIT_FAILED_MESSAGE))
@@ -1599,8 +1872,6 @@ def _after_update(result):
             return
         session.first_clone_head_sha = head
     elif session.loaded_head_sha is not None and head != session.loaded_head_sha:
-        # Validation ran in the worker; a changed checkout must never execute
-        # the updated on-disk companion against the already loaded UI.
         session.restart_required = True
         _retire_bootstrap(session)
         _emit(RESTART_MESSAGE)
@@ -1609,7 +1880,14 @@ def _after_update(result):
         _emit(COMPANION_MESSAGE)
         return
     try:
-        _invoke_companion()
+        _invoke_companion(
+            result.get("companion_sha256"),
+            result.get("companion_worktree_sha256"),
+        )
+    except _CompanionChanged:
+        session.restart_required = True
+        _retire_bootstrap(session)
+        _emit(COMPANION_CHANGED_MESSAGE)
     except Exception:
         _emit(COMPANION_FAILED_MESSAGE)
 
