@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import inspect
 import io
+import ntpath
 import os
 import signal
 import subprocess
@@ -652,6 +653,99 @@ class CheckoutValidationTests(unittest.TestCase):
         with self.assertRaises(launcher.LauncherError) as raised:
             self._validate(checkout_responses(self.root, SHA_ONE))
         self.assertEqual(raised.exception.category, "git_operation")
+
+    def test_mixed_case_repo_name_origin_is_accepted(self):
+        responses = checkout_responses(self.root, SHA_ONE)
+        responses[("remote", "get-url", "origin")] = (
+            "https://github.com/nekirk11/3dsModeler.git"
+        )
+        info, _stub = self._validate(responses)
+        self.assertEqual(info["head"], SHA_ONE)
+        self.assertEqual(
+            launcher._normalize_remote(launcher.REPO_URL), launcher._EXPECTED_REMOTE
+        )
+        self.assertEqual(launcher._EXPECTED_REMOTE, launcher._EXPECTED_REMOTE.lower())
+
+    def test_same_path_ignores_windows_casing(self):
+        with mock.patch.object(os.path, "normcase", ntpath.normcase):
+            self.assertTrue(
+                launcher._same_path("c:/dev/3dsModeler", "C:/DEV/3dsmodeler")
+            )
+            self.assertFalse(
+                launcher._same_path("c:/dev/3dsModeler", "c:/dev/other")
+            )
+
+
+class WarmLocalInvokeTests(unittest.TestCase):
+    """The hotkey path must not re-run Git once the session is warm."""
+
+    def setUp(self):
+        self._temp = tempfile.TemporaryDirectory()
+        self.root = write_checkout(Path(self._temp.name) / "3dsModeler")
+        self.addCleanup(self._temp.cleanup)
+        sys.modules.pop(launcher.SESSION_MODULE_NAME, None)
+        self.addCleanup(sys.modules.pop, launcher.SESSION_MODULE_NAME, None)
+
+    class FakeBootstrap:
+        def __init__(self):
+            self.shown = 0
+
+        def show_palette(self):
+            self.shown += 1
+            return "palette"
+
+    def _no_git(self):
+        return (
+            mock.patch.object(
+                launcher,
+                "_validate_checkout",
+                side_effect=AssertionError("duplicate validation pass"),
+            ),
+            mock.patch.object(launcher, "load_checkout_package"),
+            mock.patch(
+                "subprocess.run", side_effect=AssertionError("git spawn")
+            ),
+        )
+
+    def test_warm_verified_sha_skips_all_git_validation(self):
+        bootstrap = self.FakeBootstrap()
+        session = launcher._session_state()
+        session.checkout_root = str(self.root.resolve())
+        session.loaded_head_sha = SHA_ONE
+        session.bootstrap = bootstrap
+
+        validate, load, spawn = self._no_git()
+        with validate, load, spawn:
+            result = launcher.invoke_local(
+                checkout=self.root, _warm_verified_sha=SHA_ONE
+            )
+
+        self.assertEqual(result, "palette")
+        self.assertEqual(bootstrap.shown, 1)
+
+    def test_prevalidated_head_skips_a_second_validation_pass(self):
+        bootstrap = self.FakeBootstrap()
+        session = launcher._session_state()
+        session.bootstrap = bootstrap
+
+        validate, load, spawn = self._no_git()
+        with validate, load, spawn:
+            result = launcher.invoke_local(
+                checkout=self.root, _prevalidated_head=SHA_ONE
+            )
+
+        self.assertEqual(result, "palette")
+        self.assertEqual(bootstrap.shown, 1)
+
+    def test_warm_sha_must_match_the_loaded_session(self):
+        session = launcher._session_state()
+        session.checkout_root = str(self.root.resolve())
+        session.loaded_head_sha = SHA_ONE
+
+        with self.assertRaises(launcher.LauncherError) as raised:
+            launcher.invoke_local(checkout=self.root, _warm_verified_sha=SHA_TWO)
+
+        self.assertEqual(raised.exception.category, "stale_import")
 
 
 class ReapingProcess:

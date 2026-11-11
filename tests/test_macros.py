@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
+import ntpath
+import os
 import sys
 import tempfile
 import types
@@ -14,6 +19,7 @@ from max2025_menu_prototype.max_host import bootstrap
 from max2025_menu_prototype.tools import max_pull_and_load as launcher
 
 SHA_ONE = "1" * 40
+COMPANION_NAME = "_max2025_pull_and_load_companion"
 
 
 def write_minimal_checkout(root: Path) -> Path:
@@ -239,6 +245,170 @@ class LocalInvokeTests(unittest.TestCase):
             launcher.invoke_local(action="edge", context="face", checkout=self.root)
         with self.assertRaises(launcher.LauncherError):
             launcher.invoke_local(action="edge", convert_selection="yes", checkout=self.root)
+
+
+class RenderedMacroBodyTests(unittest.TestCase):
+    """Execute the real rendered macro body against a fake mixed-case Git.
+
+    The live bug compared the session's lower-cased origin against a
+    mixed-case ``3dsModeler`` constant and used case-sensitive path equality on
+    Windows.  These tests drive the actual generated Python (not a copy) with a
+    Windows-cased checkout, a mixed-case origin, and count `git` spawns.
+    """
+
+    def setUp(self) -> None:
+        self._temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.temp = Path(self._temp.name)
+        self.previous = Path.cwd()
+        os.chdir(self.temp)
+        self.addCleanup(os.chdir, self.previous)
+
+        self.root = Path("c:/dev/3dsmodeler")
+        self.actual = self.temp / self.root
+        write_minimal_checkout(self.actual)
+        self.sha = "a" * 40
+        git_dir = self.actual / ".git"
+        (git_dir / "refs" / "heads").mkdir(parents=True)
+        (git_dir / "HEAD").write_text("ref: refs/heads/dev\n", encoding="utf-8")
+        (git_dir / "refs" / "heads" / "dev").write_text(
+            self.sha + "\n", encoding="utf-8"
+        )
+
+        self.calls = self.temp / "calls.json"
+        companion = self.actual / "tools"
+        companion.mkdir()
+        (companion / "max_pull_and_load.py").write_text(
+            "import json\n"
+            "from pathlib import Path\n"
+            "\n"
+            "CALLS = Path(%r)\n"
+            "\n"
+            "\n"
+            "def invoke_local(**kwargs):\n"
+            "    record = {}\n"
+            "    for key, value in kwargs.items():\n"
+            "        if value is None or isinstance(value, (str, bool, int)):\n"
+            "            record[key] = value\n"
+            "        else:\n"
+            "            record[key] = str(value)\n"
+            "    CALLS.write_text(json.dumps(record), encoding='utf-8')\n"
+            "    return 'invoked'\n" % str(self.calls),
+            encoding="utf-8",
+        )
+
+        self.saved = {
+            name: module
+            for name, module in sys.modules.items()
+            if name == launcher.PACKAGE_NAME
+            or name.startswith(launcher.PACKAGE_NAME + ".")
+        }
+        for name in self.saved:
+            sys.modules.pop(name, None)
+        self.addCleanup(self._restore_modules)
+
+    def _restore_modules(self) -> None:
+        sys.modules.pop(launcher.SESSION_MODULE_NAME, None)
+        sys.modules.pop(COMPANION_NAME, None)
+        sys.modules.update(self.saved)
+
+    def _body(self, *, catch_errors: bool = True) -> str:
+        return launcher._local_loader_source(
+            action="search",
+            context=None,
+            convert_selection=False,
+            checkout=self.root,
+            catch_errors=catch_errors,
+        )
+
+    def _responses(self, remote: str = launcher.REPO_URL) -> dict:
+        return {
+            ("rev-parse", "--show-toplevel"): "C:/DEV/3dsModeler",
+            ("rev-parse", "--is-bare-repository"): "false",
+            ("symbolic-ref", "--quiet", "--short", "HEAD"): "dev",
+            ("remote", "get-url", "origin"): remote,
+            ("status", "--porcelain=v1", "--untracked-files=all"): "",
+            ("rev-parse", "HEAD"): self.sha,
+        }
+
+    def _fake_git(self, responses: dict, calls: list):
+        def run(command, **_kwargs):
+            key = tuple(str(item) for item in command[1:])
+            calls.append(key)
+            value = responses.get(key, "")
+            if isinstance(value, BaseException):
+                raise value
+            return SimpleNamespace(
+                returncode=0,
+                stdout=(value + "\n").encode("utf-8"),
+                stderr=b"",
+            )
+
+        return run
+
+    def _record(self) -> dict:
+        return json.loads(self.calls.read_text(encoding="utf-8"))
+
+    def _seed_warm_session(self) -> None:
+        session = types.ModuleType(launcher.SESSION_MODULE_NAME)
+        session.schema_version = launcher.SESSION_SCHEMA_VERSION
+        session.checkout_root = str(self.actual.resolve())
+        session.loaded_head_sha = self.sha
+        session.restart_required = False
+        session.in_flight = False
+        session.first_clone_head_sha = self.sha
+        session.bootstrap = None
+        session.bridge = None
+        session.worker = None
+        sys.modules[launcher.SESSION_MODULE_NAME] = session
+
+    def test_cold_and_warm_hotkeys_use_the_real_macro_body(self) -> None:
+        calls: list = []
+        with mock.patch.object(os.path, "normcase", ntpath.normcase), mock.patch(
+            "subprocess.run", self._fake_git(self._responses(), calls)
+        ):
+            exec(compile(self._body(), "<macro-cold>", "exec"), {})
+
+        cold = self._record()
+        self.assertEqual(cold["_prevalidated_head"], self.sha)
+        self.assertNotIn("_warm_verified_sha", cold)
+        # One validation pass (six reads), never the old duplicate second pass.
+        self.assertEqual(len(calls), 6)
+
+        self._seed_warm_session()
+        with mock.patch.object(os.path, "normcase", ntpath.normcase), mock.patch(
+            "subprocess.run", side_effect=AssertionError("warm hotkey spawned git")
+        ):
+            exec(compile(self._body(), "<macro-warm>", "exec"), {})
+
+        warm = self._record()
+        self.assertEqual(warm["_warm_verified_sha"], self.sha)
+        self.assertNotIn("_prevalidated_head", warm)
+
+    def test_rendered_macro_reports_clean_failures_without_maxscript_raise(self) -> None:
+        responses = self._responses("https://github.com/someone/other.git")
+        output = io.StringIO()
+        with mock.patch.object(os.path, "normcase", ntpath.normcase), mock.patch(
+            "subprocess.run", self._fake_git(responses, [])
+        ), contextlib.redirect_stdout(output):
+            exec(compile(self._body(), "<macro-catch>", "exec"), {})
+
+        self.assertEqual(
+            output.getvalue().strip(),
+            "[3dsModeler] The local checkout origin is not the expected "
+            "repository. Repair it outside Max.",
+        )
+        self.assertFalse(self.calls.exists())
+
+        with mock.patch.object(os.path, "normcase", ntpath.normcase), mock.patch(
+            "subprocess.run", self._fake_git(responses, [])
+        ), self.assertRaises(RuntimeError) as raised:
+            exec(compile(self._body(catch_errors=False), "<macro-raise>", "exec"), {})
+        self.assertEqual(
+            str(raised.exception),
+            "The local checkout origin is not the expected repository. "
+            "Repair it outside Max.",
+        )
 
 
 if __name__ == "__main__":

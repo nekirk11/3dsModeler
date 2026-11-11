@@ -810,10 +810,12 @@ def _remote_dev_sha(checkout: Path) -> str:
 
 
 def _normalize_remote(url: str) -> str:
+    """Case-fold a remote URL so repository-name casing never mismatches."""
+
     text = (url or "").strip().rstrip("/")
     if text.lower().endswith(".git"):
         text = text[:-4]
-    return text.rstrip("/")
+    return text.rstrip("/").lower()
 
 
 _EXPECTED_REMOTE = _normalize_remote(REPO_URL)
@@ -1514,6 +1516,8 @@ def invoke_local(
     context: Any = None,
     convert_selection: bool = False,
     checkout: Path = DEFAULT_CHECKOUT,
+    _prevalidated_head: Optional[str] = None,
+    _warm_verified_sha: Optional[str] = None,
 ) -> Any:
     """Load the trusted local checkout synchronously and open V2 UI.
 
@@ -1522,6 +1526,11 @@ def invoke_local(
     reuses the already-loaded package at the same root/SHA, and opens the
     palette or switches context.  It never clones, fetches, pulls, starts a
     worker, or prompts for credentials.
+
+    ``_prevalidated_head`` lets the generated macro carry the HEAD it already
+    proved so this seam does not repeat the same validation pass.
+    ``_warm_verified_sha`` is the zero-Git path: the caller proved the on-disk
+    HEAD still matches the imported session, so only in-memory checks run.
     """
 
     _assert_main_thread()
@@ -1550,14 +1559,25 @@ def invoke_local(
         raise LauncherError(DUPLICATE_MESSAGE, "in_flight")
 
     root = _checkout_root(checkout)
-    try:
-        validated = _validate_checkout(root, timeout=LOCAL_LOAD_TIMEOUT)
-    except LauncherError as exc:
-        if exc.category in ("permission", "checkout_layout"):
-            raise LauncherError(LOCAL_LOAD_MESSAGE, "local_unavailable") from exc
-        raise
+    if _warm_verified_sha is not None:
+        sha = _normalize_sha(_warm_verified_sha)
+        if (
+            session.checkout_root is None
+            or not _same_path(session.checkout_root, root)
+            or session.loaded_head_sha != sha
+        ):
+            raise LauncherError(STALE_IMPORT_MESSAGE, "stale_import")
+    elif _prevalidated_head is not None:
+        sha = _normalize_sha(_prevalidated_head)
+    else:
+        try:
+            validated = _validate_checkout(root, timeout=LOCAL_LOAD_TIMEOUT)
+        except LauncherError as exc:
+            if exc.category in ("permission", "checkout_layout"):
+                raise LauncherError(LOCAL_LOAD_MESSAGE, "local_unavailable") from exc
+            raise
+        sha = validated["head"]
 
-    sha = validated["head"]
     if session.checkout_root is not None and not _same_path(session.checkout_root, root):
         session.restart_required = True
         _uninstall_trusted(session)
@@ -1608,15 +1628,23 @@ def _local_loader_source(
     context: Optional[str],
     convert_selection: bool,
     checkout: Path,
+    catch_errors: bool = True,
 ) -> str:
     """Return the fixed, self-contained Python body of one macro shim.
 
     The body validates the local checkout with stdlib/local Git, imports the
     companion by absolute path under a stable registered module name, and then
     calls ``invoke_local``.  It never uses the network or the ``.ms`` file.
+
+    A warm session (the same checkout already imported in this Max session at
+    an unchanged HEAD) is proven from ``.git`` files alone, so repeated hotkey
+    presses spawn no ``git.exe`` processes.  ``catch_errors`` keeps an expected
+    failure as one clean Listener line instead of an unhandled MAXScript
+    traceback dialog; the raising ``_entry`` helper stays testable.
     """
 
     return '''\
+import os
 import sys
 import threading
 import types
@@ -1627,10 +1655,13 @@ PACKAGE_NAME = %(package)r
 BRANCH = %(branch)r
 EXPECTED_REMOTE = %(remote)r
 COMPANION_MODULE = "_max2025_pull_and_load_companion"
+SESSION_MODULE_NAME = %(session)r
+COMPANION_PATH = ROOT / "tools" / "max_pull_and_load.py"
 TIMEOUT = %(timeout)r
 ACTION = %(action)r
 CONTEXT = %(context)r
 CONVERT_SELECTION = %(convert)r
+CATCH_ERRORS = %(catch)r
 OVERLAY_NAME = "user_aliases.json"
 
 
@@ -1638,18 +1669,28 @@ def _fail(message):
     raise RuntimeError(message)
 
 
+def _is_sha(value):
+    return len(value) in (40, 64) and all(
+        ch in "0123456789abcdef" for ch in value
+    )
+
+
 def _under(path, root):
     try:
-        Path(path).resolve().relative_to(Path(root).resolve())
-    except (OSError, ValueError):
+        left = os.path.normcase(str(Path(path).resolve()))
+        right = os.path.normcase(str(Path(root).resolve()))
+        Path(left).relative_to(right)
+    except (OSError, TypeError, ValueError):
         return False
     return True
 
 
 def _same(left, right):
     try:
-        return Path(left).resolve() == Path(right).resolve()
-    except OSError:
+        return os.path.normcase(str(Path(left).resolve())) == os.path.normcase(
+            str(Path(right).resolve())
+        )
+    except (OSError, TypeError, ValueError):
         return False
 
 
@@ -1704,6 +1745,97 @@ def _dirty_lines(value):
             continue
         lines.append(stripped)
     return lines
+
+
+def _head_from_files():
+    """Read the checked-out dev HEAD without spawning ``git.exe``.
+
+    Returns ``None`` when the answer cannot be proven from plain files (for
+    example packed refs), letting the caller fall back to one bounded read.
+    """
+
+    git_dir = ROOT / ".git"
+    if git_dir.is_symlink() or not git_dir.is_dir():
+        return None
+    try:
+        head = (git_dir / "HEAD").read_text(
+            encoding="utf-8", errors="replace"
+        ).strip()
+    except OSError:
+        return None
+    if head.startswith("ref:"):
+        ref = head[4:].strip()
+        if ref != "refs/heads/" + BRANCH:
+            return None
+        try:
+            value = (git_dir / "refs" / "heads" / BRANCH).read_text(
+                encoding="utf-8", errors="replace"
+            ).strip().lower()
+        except OSError:
+            value = ""
+        if _is_sha(value):
+            return value
+        try:
+            packed = (git_dir / "packed-refs").read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            return None
+        for line in packed.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or stripped.startswith("^"):
+                continue
+            parts = stripped.split(None, 1)
+            if len(parts) != 2 or parts[1].strip() != ref:
+                continue
+            candidate = parts[0].strip().lower()
+            if _is_sha(candidate):
+                return candidate
+        return None
+    value = head.lower()
+    return value if _is_sha(value) else None
+
+
+def _warm_session():
+    """Return ``(companion, head)`` when this session already loaded this HEAD.
+
+    Warm means the session stamp is trustworthy, the checkout root is the
+    expected one, the companion is the module we would load anyway, and the
+    on-disk HEAD still equals the imported commit.  All checks are file reads;
+    the single ``git`` fallback exists only for packed or detached HEADs.
+    """
+
+    if threading.current_thread() is not threading.main_thread():
+        return None
+    module = sys.modules.get(COMPANION_MODULE)
+    session = sys.modules.get(SESSION_MODULE_NAME)
+    if module is None or session is None:
+        return None
+    if not callable(getattr(module, "invoke_local", None)):
+        return None
+    if not _same(getattr(module, "__file__", None), COMPANION_PATH):
+        return None
+    loaded = getattr(session, "loaded_head_sha", None)
+    if not isinstance(loaded, str):
+        return None
+    loaded = loaded.strip().lower()
+    if not _is_sha(loaded):
+        return None
+    if getattr(session, "restart_required", True):
+        return None
+    if getattr(session, "in_flight", True):
+        return None
+    if not _same(getattr(session, "checkout_root", None), ROOT):
+        return None
+    head = _head_from_files()
+    if head is None:
+        try:
+            head = _git(["rev-parse", "HEAD"]).lower()
+        except RuntimeError:
+            return None
+    if head != loaded:
+        return None
+    return module, head
 
 
 def _validate():
@@ -1773,8 +1905,19 @@ def _load_companion():
     return module
 
 
-def _run():
-    _validate()
+def _entry():
+    warm = _warm_session()
+    if warm is not None:
+        module, head = warm
+        module.invoke_local(
+            action=ACTION,
+            context=CONTEXT,
+            convert_selection=CONVERT_SELECTION,
+            checkout=ROOT,
+            _warm_verified_sha=head,
+        )
+        return
+    head = _validate()
     module = _load_companion()
     invoke_local = getattr(module, "invoke_local", None)
     if not callable(invoke_local):
@@ -1784,7 +1927,25 @@ def _run():
         context=CONTEXT,
         convert_selection=CONVERT_SELECTION,
         checkout=ROOT,
+        _prevalidated_head=head,
     )
+
+
+def _clean_message(exc):
+    text = str(exc).strip()
+    if not text:
+        text = exc.__class__.__name__
+    return text.splitlines()[0]
+
+
+def _run():
+    if CATCH_ERRORS:
+        try:
+            _entry()
+        except Exception as exc:
+            print("[3dsModeler] " + _clean_message(exc), flush=True)
+        return
+    _entry()
 
 
 _run()
@@ -1793,10 +1954,12 @@ _run()
         "package": PACKAGE_NAME,
         "branch": BRANCH,
         "remote": _normalize_remote(REPO_URL),
+        "session": SESSION_MODULE_NAME,
         "timeout": LOCAL_LOAD_TIMEOUT,
         "action": action,
         "context": context,
         "convert": bool(convert_selection),
+        "catch": bool(catch_errors),
         "required": REQUIRED_ROOT_ENTRIES,
         "missing_git": MISSING_GIT_MESSAGE,
         "local_load": LOCAL_LOAD_MESSAGE,
@@ -2430,7 +2593,7 @@ def _normalize_remote(url):
     text = (url or "").strip().rstrip("/")
     if text.lower().endswith(".git"):
         text = text[:-4]
-    return text.rstrip("/")
+    return text.rstrip("/").lower()
 
 
 _EXPECTED_REMOTE = _normalize_remote(REPO_URL)
