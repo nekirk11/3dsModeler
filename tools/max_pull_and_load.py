@@ -170,6 +170,13 @@ NO_QT_MESSAGE = (
 )
 MAIN_THREAD_MESSAGE = "The launcher must run on the 3ds Max main thread."
 DUPLICATE_MESSAGE = "An update is already in progress."
+LISTENER_TIP = (
+    "Diagnostics (Python tab, or in MAXScript tab run): python.Execute "
+    '"from max2025_menu_prototype.max_host import bootstrap; '
+    'print(bootstrap.report_diagnostics())"'
+)
+_NON_REPO_MAX_ENTRIES = 3
+_NON_REPO_MAX_NAME = 40
 
 _EMBEDDED_BEGIN = "-- BEGIN EMBEDDED PYTHON"
 _EMBEDDED_END = "-- END EMBEDDED PYTHON"
@@ -282,6 +289,54 @@ def _checkout_root(checkout: Path | str) -> Path:
         if candidate.is_symlink() and not _inside(candidate.resolve(), root):
             raise LauncherError(LAYOUT_MESSAGE, "checkout_layout")
     return root
+
+
+def _is_empty_directory(path: Path) -> bool:
+    """True only for a real, direct child-free directory."""
+
+    try:
+        if not path.is_dir() or path.is_symlink():
+            return False
+        return not any(path.iterdir())
+    except OSError:
+        return False
+
+
+def _sanitize_entry_name(name: str) -> str:
+    cleaned = "".join(
+        char for char in name if char.isprintable() and char not in "\r\n\t"
+    )
+    return cleaned[:_NON_REPO_MAX_NAME] or "?"
+
+
+def _not_a_checkout_message(checkout: Path) -> str:
+    """Finite repair instruction naming a bounded, sanitized entry sample."""
+
+    try:
+        names = sorted(child.name for child in checkout.iterdir())
+    except OSError:
+        names = []
+    shown = ", ".join(
+        _sanitize_entry_name(name) for name in names[:_NON_REPO_MAX_ENTRIES]
+    )
+    if len(names) > _NON_REPO_MAX_ENTRIES:
+        shown += ", ..."
+    return (
+        "%s already exists and is not a Git checkout (found: %s). Save "
+        "max_pull_and_load.ms outside %s (for example %s) and leave %s empty "
+        "or absent, then retry."
+        % (
+            checkout,
+            shown,
+            checkout,
+            checkout.parent / "max_pull_and_load.ms",
+            checkout,
+        )
+    )
+
+
+def _emit_listener_tip() -> None:
+    _emit(LISTENER_TIP)
 
 
 def _expected_module_paths(name: str, root: Path) -> tuple[Path, ...]:
@@ -505,25 +560,18 @@ def _terminate_tree(process: subprocess.Popen) -> bool:
         except Exception:
             tree_confirmed = False
     else:
+        # ``start_new_session=True`` makes the child its own session and
+        # process-group leader, so the group id is exactly its pid.  Using the
+        # pid directly also reaches helpers after the leader has exited, when
+        # ``getpgid`` would raise and the group could never be polled.
+        pgid = pid
         try:
-            pgid = os.getpgid(pid)
+            os.killpg(pgid, signal.SIGKILL)
+            tree_confirmed = True
         except ProcessLookupError:
             tree_confirmed = True
         except Exception:
             tree_confirmed = False
-        else:
-            if pgid != pid:
-                # Never signal a group we did not create: without
-                # start_new_session the group could belong to Max itself.
-                tree_confirmed = False
-            else:
-                try:
-                    os.killpg(pgid, signal.SIGKILL)
-                    tree_confirmed = True
-                except ProcessLookupError:
-                    tree_confirmed = True
-                except Exception:
-                    tree_confirmed = False
     try:
         process.kill()
     except Exception:
@@ -733,7 +781,7 @@ def _validate_checkout(checkout: Path) -> dict[str, Any]:
 
 
 def _clone_checkout(checkout: Path) -> str:
-    if checkout.exists():
+    if checkout.exists() and not _is_empty_directory(checkout):
         raise LauncherError(TARGET_EXISTS_MESSAGE, "permission")
     try:
         checkout.parent.mkdir(parents=True, exist_ok=True)
@@ -746,7 +794,7 @@ def _clone_checkout(checkout: Path) -> str:
         timeout=NETWORK_GIT_TIMEOUT,
     )
     if result.returncode != 0:
-        if checkout.exists():
+        if checkout.exists() and not _is_empty_directory(checkout):
             raise LauncherError(PARTIAL_CLONE_MESSAGE, "partial_clone")
         raise _classify_git_failure(result)
     try:
@@ -759,7 +807,12 @@ def _clone_checkout(checkout: Path) -> str:
 
 def _fetch_origin_dev(checkout: Path) -> None:
     result = _run_git(
-        ["fetch", "--no-tags", "origin", BRANCH],
+        [
+            "fetch",
+            "--no-tags",
+            "origin",
+            "+refs/heads/dev:refs/remotes/origin/dev",
+        ],
         cwd=checkout,
         timeout=NETWORK_GIT_TIMEOUT,
     )
@@ -849,11 +902,14 @@ def _worker_update_locked(
                 after_sha=info["head"],
             )
 
-        if not checkout.exists():
+        if not checkout.exists() or _is_empty_directory(checkout):
             if modules_loaded or loaded_sha is not None:
                 return _failure("stale_import", STALE_IMPORT_MESSAGE)
             head = _clone_checkout(checkout)
             return _result(ok=True, action="clone", after_sha=head)
+
+        if not (checkout / ".git").exists():
+            return _failure("not_a_checkout", _not_a_checkout_message(checkout))
 
         info = _validate_checkout(checkout)
         before = info["head"]
@@ -1183,7 +1239,8 @@ def _on_git_finished(result: dict[str, Any], checkout: Path) -> None:
             _enter_restart_required(session, STALE_IMPORT_MESSAGE)
             raise LauncherError(STALE_IMPORT_MESSAGE, "stale_import")
         bootstrap.show_tools()
-        _emit("Loaded commit %s." % sha[:12])
+        _emit("Loaded commit %s." % sha)
+        _emit_listener_tip()
         return
 
     if action not in ("clone", "handoff", "import-only", "pull-import"):
@@ -1198,7 +1255,8 @@ def _on_git_finished(result: dict[str, Any], checkout: Path) -> None:
         _enter_restart_required(session, STALE_IMPORT_MESSAGE)
         raise LauncherError(STALE_IMPORT_MESSAGE, "stale_import")
     bootstrap.show_tools()
-    _emit("Loaded commit %s from %s." % (sha[:12], Path(package.__file__).parent))
+    _emit("Loaded commit %s from %s." % (sha, Path(package.__file__).parent))
+    _emit_listener_tip()
 
 
 def start(*, checkout: Path = DEFAULT_CHECKOUT) -> None:
@@ -1296,6 +1354,11 @@ RESTART_MESSAGE = "Checkout updated; restart 3ds Max before loading this commit.
 NO_QT_MESSAGE = "Start 3ds Max 2025 before running the launcher; its Qt application was not found."
 MAIN_THREAD_MESSAGE = "The launcher must run on the 3ds Max main thread."
 DUPLICATE_MESSAGE = "An update is already in progress."
+LISTENER_TIP = (
+    "Diagnostics (Python tab, or in MAXScript tab run): python.Execute "
+    '"from max2025_menu_prototype.max_host import bootstrap; '
+    'print(bootstrap.report_diagnostics())"'
+)
 MISSING_GIT_MESSAGE = "Git is not on PATH. Install Git for Windows outside Max."
 TARGET_EXISTS_MESSAGE = "The checkout path already exists but is not a validated checkout. Repair or move it outside Max, then retry."
 PARTIAL_CLONE_MESSAGE = "The clone did not finish. The partial directory was left in place for manual repair; nothing was deleted."
@@ -1321,6 +1384,48 @@ _REAP_STATE = {"unreaped": False}
 
 def _emit(message):
     print(message, flush=True)
+
+
+def _is_empty_directory(path):
+    try:
+        if not path.is_dir() or path.is_symlink():
+            return False
+        return not any(path.iterdir())
+    except OSError:
+        return False
+
+
+def _sanitize_entry_name(name):
+    cleaned = "".join(
+        ch for ch in name if ch.isprintable() and ch not in "\r\n\t"
+    )
+    return cleaned[:40] or "?"
+
+
+def _not_a_checkout_message():
+    try:
+        names = sorted(child.name for child in CHECKOUT.iterdir())
+    except OSError:
+        names = []
+    shown = ", ".join(_sanitize_entry_name(name) for name in names[:3])
+    if len(names) > 3:
+        shown += ", ..."
+    return (
+        "%s already exists and is not a Git checkout (found: %s). Save "
+        "max_pull_and_load.ms outside %s (for example %s) and leave %s empty "
+        "or absent, then retry."
+        % (
+            CHECKOUT,
+            shown,
+            CHECKOUT,
+            CHECKOUT.parent / "max_pull_and_load.ms",
+            CHECKOUT,
+        )
+    )
+
+
+def _emit_listener_tip():
+    _emit(LISTENER_TIP)
 
 
 def _session():
@@ -1469,25 +1574,18 @@ def _terminate_tree(process):
         except Exception:
             tree_confirmed = False
     else:
+        # ``start_new_session=True`` makes the child its own session and
+        # process-group leader, so the group id is exactly its pid.  Using the
+        # pid directly also reaches helpers after the leader has exited, when
+        # ``getpgid`` would raise and the group could never be polled.
+        pgid = pid
         try:
-            pgid = os.getpgid(pid)
+            os.killpg(pgid, signal.SIGKILL)
+            tree_confirmed = True
         except ProcessLookupError:
             tree_confirmed = True
         except Exception:
             tree_confirmed = False
-        else:
-            if pgid != pid:
-                # Never signal a group we did not create: without
-                # start_new_session the group could belong to Max itself.
-                tree_confirmed = False
-            else:
-                try:
-                    os.killpg(pgid, signal.SIGKILL)
-                    tree_confirmed = True
-                except ProcessLookupError:
-                    tree_confirmed = True
-                except Exception:
-                    tree_confirmed = False
     try:
         process.kill()
     except Exception:
@@ -1669,7 +1767,10 @@ def _head():
 
 def _fetch_origin_dev():
     code, stdout, stderr = _run_git(
-        ["fetch", "--no-tags", "origin", BRANCH], CHECKOUT, NETWORK_GIT_TIMEOUT
+        ["fetch", "--no-tags", "origin",
+         "+refs/heads/dev:refs/remotes/origin/dev"],
+        CHECKOUT,
+        NETWORK_GIT_TIMEOUT,
     )
     if code != 0:
         message, category = _classify(stderr, stdout)
@@ -1711,22 +1812,18 @@ def _companion_digests(head):
     )
     if code != 0 or not blob:
         raise _GitFailure(COMPANION_MESSAGE, "companion_missing")
-    worktree_digest = None
-    code, filtered, _stderr = _run_git_bytes(
-        ["cat-file", "--filters", revision], CHECKOUT, LOCAL_GIT_TIMEOUT
-    )
-    if code == 0 and filtered:
-        worktree_digest = _sha256_bytes(filtered)
-    return _sha256_bytes(blob), worktree_digest
+    exact = _sha256_bytes(blob)
+    normalized = _sha256_bytes(blob.replace(b"\r\n", b"\n"))
+    return exact, normalized
 
 
 def _update_result():
     _REAP_STATE["unreaped"] = False
     try:
-        if CHECKOUT.exists():
-            result = _existing_result()
-        else:
+        if not CHECKOUT.exists() or _is_empty_directory(CHECKOUT):
             result = _clone_result()
+        else:
+            result = _existing_result()
         if _REAP_STATE["unreaped"]:
             result["unreaped"] = True
         return result
@@ -1745,6 +1842,8 @@ def _update_result():
 def _existing_result():
     session = _session()
     loaded = session.loaded_head_sha
+    if not (CHECKOUT / ".git").exists():
+        raise _GitFailure(_not_a_checkout_message(), "not_a_checkout")
     head = _validate_checkout()
     if loaded is not None and head != loaded:
         raise _GitFailure(RESTART_MESSAGE, "restart_required")
@@ -1760,16 +1859,16 @@ def _existing_result():
         raise _GitFailure(DIVERGED_MESSAGE, "diverged")
     if loaded is not None and remote != loaded:
         raise _GitFailure(RESTART_MESSAGE, "restart_required")
-    blob, worktree = _companion_digests(head)
+    exact, normalized = _companion_digests(head)
     return {"ok": True, "action": "existing", "head": head, "remote_sha": remote,
-            "companion_sha256": blob, "companion_worktree_sha256": worktree,
+            "companion_sha256": exact, "companion_normalized_sha256": normalized,
             "message": ""}
 
 
 def _clone_result():
     if not shutil.which("git"):
         raise _GitFailure(MISSING_GIT_MESSAGE, "missing_git")
-    if CHECKOUT.exists():
+    if CHECKOUT.exists() and not _is_empty_directory(CHECKOUT):
         raise _GitFailure(TARGET_EXISTS_MESSAGE, "permission")
     try:
         CHECKOUT.parent.mkdir(parents=True, exist_ok=True)
@@ -1781,7 +1880,7 @@ def _clone_result():
         NETWORK_GIT_TIMEOUT,
     )
     if code != 0:
-        if CHECKOUT.exists():
+        if CHECKOUT.exists() and not _is_empty_directory(CHECKOUT):
             raise _GitFailure(PARTIAL_CLONE_MESSAGE, "partial_clone")
         message, category = _classify(stderr, stdout)
         raise _GitFailure(message, category)
@@ -1790,19 +1889,19 @@ def _clone_result():
         remote = _remote_dev_sha()
         if remote != head:
             raise _GitFailure(PARTIAL_CLONE_MESSAGE, "partial_clone")
-        blob, worktree = _companion_digests(head)
+        exact, normalized = _companion_digests(head)
     except _GitFailure:
         raise _GitFailure(PARTIAL_CLONE_MESSAGE, "partial_clone") from None
     return {"ok": True, "action": "clone", "head": head, "remote_sha": remote,
-            "companion_sha256": blob, "companion_worktree_sha256": worktree,
-            "message": "Cloned commit %s." % head[:12]}
+            "companion_sha256": exact, "companion_normalized_sha256": normalized,
+            "message": "Cloned commit %s." % head}
 
 
 def _companion_path():
     return CHECKOUT / "tools" / "max_pull_and_load.py"
 
 
-def _invoke_companion(blob_sha256, worktree_sha256=None):
+def _invoke_companion(blob_sha256, normalized_sha256=None):
     path = _companion_path()
     try:
         data = path.read_bytes()
@@ -1811,11 +1910,12 @@ def _invoke_companion(blob_sha256, worktree_sha256=None):
     if len(data) > _MAX_COMPANION_BYTES:
         raise _CompanionChanged(COMPANION_CHANGED_MESSAGE)
     digest = hashlib.sha256(data).hexdigest()
-    expected = tuple(
-        value for value in (blob_sha256, worktree_sha256)
+    normalized = hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+    allowed = {
+        value for value in (blob_sha256, normalized_sha256)
         if isinstance(value, str) and len(value) == 64
-    )
-    if not expected or digest not in expected:
+    }
+    if not allowed or (digest not in allowed and normalized not in allowed):
         raise _CompanionChanged(COMPANION_CHANGED_MESSAGE)
     namespace = {
         "__name__": "_max2025_pull_and_load_companion",
@@ -1882,8 +1982,10 @@ def _after_update(result):
     try:
         _invoke_companion(
             result.get("companion_sha256"),
-            result.get("companion_worktree_sha256"),
+            result.get("companion_normalized_sha256"),
         )
+        _emit("Loaded commit %s from %s." % (head, CHECKOUT))
+        _emit_listener_tip()
     except _CompanionChanged:
         session.restart_required = True
         _retire_bootstrap(session)
@@ -1946,7 +2048,8 @@ def _schedule(*, bridge_factory=None, worker_factory=None):
     if session.in_flight:
         _emit(DUPLICATE_MESSAGE)
         return None
-    if not CHECKOUT.exists() and (session.loaded_head_sha is not None or _alias_loaded()):
+    if ((not CHECKOUT.exists() or _is_empty_directory(CHECKOUT))
+            and (session.loaded_head_sha is not None or _alias_loaded())):
         session.restart_required = True
         raise RuntimeError(RESTART_MESSAGE)
     session.in_flight = True

@@ -77,8 +77,10 @@ restarting Max between every launch.
    `https://github.com/nekirk11/3dsModeler/raw/dev/tools/max_pull_and_load.ms`.
    Treat that as untrusted input until the source has been reviewed. It is not
    an auto-executed remote download.
-2. Save the `.ms` locally, outside the future checkout. Do not rely on the
-   script's current directory or on a sibling `.py` file.
+2. Save the `.ms` locally, outside the future checkout (for example
+   `C:\dev\max_pull_and_load.ms`). Do not save it inside `C:\dev\3dsModeler`.
+   Leave `C:\dev\3dsModeler` empty or absent so the launcher can clone into it.
+   Do not rely on the script's current directory or on a sibling `.py` file.
 3. In Max 2025, choose **Scripting > Run Script...** and select the saved
    `.ms`.
 4. Watch the Listener for finite progress categories: prerequisite check,
@@ -109,7 +111,18 @@ restarting Max between every launch.
 If the checkout directory already exists as a non-repository directory, a
 repository on another branch, a detached HEAD, or a checkout with a different
 origin, stop. Do not delete it, move it, or initialize Git inside it. Report the
-collision for manual repair.
+collision for manual repair. An existing **empty** `C:\dev\3dsModeler` is not a
+collision: the launcher clones directly into it. A non-empty directory without
+`.git` stops with a finite message that names a bounded sample of entries; move
+the saved `.ms` outside that directory and leave the directory empty or absent,
+then retry.
+
+Diagnostics are Python, not MAXScript. Switch the Listener to the Python tab, or
+in the MAXScript tab run:
+
+```text
+python.Execute "from max2025_menu_prototype.max_host import bootstrap; print(bootstrap.report_diagnostics())"
+```
 
 ### Flow B — subsequent launch at the same commit
 

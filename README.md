@@ -34,11 +34,16 @@ startup script, registry entry, or permanent hotkey.
    clones `https://github.com/nekirk11/3dsModeler.git` (branch `dev`) to
    `C:\dev\3dsModeler` or validates the existing checkout. Git runs in a worker;
    the Listener shows finite progress lines and the tools panel opens on the
-   main thread when the import succeeds.
-3. Record the printed checkout root and full commit SHA in
-   [`docs/TOMORROW-MAX2025.md`](docs/TOMORROW-MAX2025.md). Do not run the
-   optional menu, diagnostics, or `uninstall()` automatically after the first
-   panel launch.
+   main thread when the import succeeds. Save the `.ms` **outside**
+   `C:\dev\3dsModeler` (for example `C:\dev\max_pull_and_load.ms`) and leave
+   that directory empty or absent; a non-empty directory that is not a Git
+   checkout stops with a finite repair message.
+3. Record the printed checkout root and full 40-character commit SHA in
+   [`docs/TOMORROW-MAX2025.md`](docs/TOMORROW-MAX2025.md). Diagnostics are
+   Python: switch the Listener to the Python tab, or in the MAXScript tab run
+   `python.Execute "from max2025_menu_prototype.max_host import bootstrap; print(bootstrap.report_diagnostics())"`.
+   Do not run the optional menu, diagnostics, or `uninstall()` automatically
+   after the first panel launch.
 
 The Python companion `tools/max_pull_and_load.py` owns the Git update,
 import-alias, commit-guard, and restart policy. The standalone `.ms` works even

@@ -547,3 +547,74 @@ push audit stay in the external maintainer handoff rather than in this file.
 Python bridge, real Windows `taskkill`/Git transport and CRLF checkout
 behaviour, live clone/update from Max, and Qt queued delivery inside Max. The
 Windows and POSIX process paths are simulated in tests only.
+
+## Launcher Cycle 3 fixes: empty-target clone, full SHA, and deterministic refs (2026-11-11)
+
+This additive section covers the live Listener report from a Windows 3ds Max
+2025 session. It does not relabel any earlier count and does not promote native
+runtime state.
+
+**Finding 1 — a pre-existing `C:\dev\3dsModeler` defeated the first clone.**
+Previously any existing path was sent to checkout validation, so an empty
+directory (or one holding the saved `.ms`) failed with the vague
+`The checkout layout is not a complete prototype package. Repair it outside Max.`
+message. Both launchers now treat a missing **or empty** checkout directory as a
+clone target and run the same `git clone --branch dev ... <checkout>` directly
+into it. A non-empty directory without `.git` stops with a finite, actionable
+message naming at most three sanitized entry basenames (40 characters each,
+control characters removed, sorted): it says the path already exists and is not
+a Git checkout, tells the operator to save `max_pull_and_load.ms` **outside**
+the checkout (for example `C:\dev\max_pull_and_load.ms`), and to leave the
+directory empty or absent before retrying. Detection happens before any Git
+process, so no local repository state is touched.
+
+**Finding 2 — completion printed only 12 SHA characters and gave no
+diagnostics hint.** Successful loads now print the full 40-character commit,
+together with the checkout root, and a one-line Listener tip after the panel is
+shown: `Diagnostics (Python tab, or in MAXScript tab run): python.Execute
+"from max2025_menu_prototype.max_host import bootstrap;
+print(bootstrap.report_diagnostics())"`. The standalone `.ms` bootstrap prints
+the same entry, because the operator may still be in the MAXScript Listener
+tab.
+
+**Finding 3 — reviewer items closed while editing the same paths.**
+The fetch is now an explicit refspec
+`git fetch --no-tags origin +refs/heads/dev:refs/remotes/origin/dev`, so
+`refs/remotes/origin/dev` is updated deterministically instead of relying on
+default refspec/configuration. Companion-byte verification no longer runs
+`git cat-file --filters` (which could execute local clean/smudge filters); it
+reads the committed blob with `git cat-file -p <head>:tools/max_pull_and_load.py`
+and accepts either the exact `sha256(disk_bytes) == sha256(blob)` match or an
+exact CRLF-normalized match
+(`disk_bytes.replace(b"\r\n", b"\n") == blob.replace(b"\r\n", b"\n")`). On
+POSIX, `start_new_session=True` guarantees `pgid == pid`, so the tree kill uses
+`pgid = proc.pid` directly for `os.killpg(pgid, SIGKILL)` and for the
+`os.killpg(pgid, 0)` poll, including when the group leader has already exited
+and `getpgid` would raise.
+
+Regression coverage in `tests/test_pull_and_load.py` grew from 79 to **86**
+cases (7 added): empty-directory clone routing for the companion and the
+embedded bootstrap, the non-repository message sample/bounds/sanitization,
+full-SHA and Listener-tip output on load and no-op completion, the exact fetch
+refspec, CRLF-normalized blob acceptance without `--filters`, and the POSIX
+leader-exit group kill.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Launcher regression suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest max2025_menu_prototype.tests.test_pull_and_load -v` | **86 tests, OK** |
+| Portable suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest max2025_menu_prototype.tests.test_portable -v` | **25 tests, OK** |
+| Aggregate stdlib suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s max2025_menu_prototype/tests -p 'test_*.py' -v` | **398 tests, OK, 12 skipped** |
+| Copied `3dsModeler`-named checkout suite | same discovery inside a copied `3dsModeler/` directory with the frozen alias seam | **398 tests, OK, 12 skipped** |
+| Python 3.11 AST + compile | `ast.parse(..., feature_version=(3, 11))` and `compile()` over all **43** prototype `*.py` files | **OK**, no bytecode written |
+| Deterministic ZIP | `python3 -m max2025_menu_prototype.tools.portable` twice | **59 members; identical SHA-256 on repeat** |
+| Whitespace | `git diff --check` | **OK** |
+| Protected baseline | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m max2025_menu_prototype.tools.baseline verify --manifest <external manifest>` | **293 protected entries unchanged** |
+
+Archive member inventory, both ZIP hashes, extraction import, and the remote
+push audit stay in the external maintainer handoff rather than in this file.
+
+**Still NOT RUN for these fixes:** MAXScript parsing/execution in Max, Max's
+Python bridge, real Windows Git transport and the empty-directory clone path
+against live GitHub, the Listener tip rendering in Max, live clone/update from
+Max, and Qt queued delivery inside Max. The Windows and POSIX process paths are
+simulated in tests only.

@@ -59,6 +59,7 @@ def uninstall():
 
 def write_checkout(root: Path, bootstrap: str | None = None) -> Path:
     root.mkdir(parents=True, exist_ok=True)
+    (root / ".git").mkdir(exist_ok=True)
     files = {
         "__init__.py": (
             "from . import core\n"
@@ -484,7 +485,7 @@ def checkout_responses(root: Path, head: str, remote: str | None = None) -> dict
         ("rev-parse", "HEAD"): head,
         ("rev-parse", "--absolute-git-dir"): str(root / ".git"),
         ("status", "--porcelain=v1", "--untracked-files=all"): "",
-        ("fetch", "--no-tags", "origin", "dev"): "",
+        ("fetch", "--no-tags", "origin", "+refs/heads/dev:refs/remotes/origin/dev"): "",
         ("rev-parse", "--verify", "refs/remotes/origin/dev"): remote or head,
         ("merge-base", "--is-ancestor", head, remote or head): (0, "", ""),
         ("pull", "--ff-only", "origin", "dev"): "",
@@ -504,7 +505,7 @@ def embedded_checkout_responses(
         ("rev-parse", "HEAD"): head,
         ("rev-parse", "--absolute-git-dir"): str(root / ".git"),
         ("status", "--porcelain=v1", "--untracked-files=all"): "",
-        ("fetch", "--no-tags", "origin", "dev"): "",
+        ("fetch", "--no-tags", "origin", "+refs/heads/dev:refs/remotes/origin/dev"): "",
         ("rev-parse", "--verify", "refs/remotes/origin/dev"): remote or head,
         ("merge-base", "--is-ancestor", head, remote or head): (
             (0, "", "") if ancestor else (1, "", "")
@@ -529,17 +530,15 @@ def embedded_git_stub(responses: dict, calls: list | None = None):
     return run
 
 
-def embedded_git_bytes_stub(data: bytes, filtered: bytes | None = None, calls: list | None = None):
-    """Fake ``_run_git_bytes`` returning ``data`` for blob reads."""
+def embedded_git_bytes_stub(data: bytes, calls: list | None = None):
+    """Fake ``_run_git_bytes`` returning ``data`` for blob reads only."""
 
     def run(args, cwd, timeout):
         key = tuple(str(item) for item in args)
         if calls is not None:
             calls.append(key)
-        if key[:1] != ("cat-file",):
+        if key[:1] != ("cat-file",) or "--filters" in key:
             return (1, b"", "unexpected")
-        if "--filters" in key:
-            return (0, filtered if filtered is not None else data, "")
         return (0, data, "")
 
     return run
@@ -641,7 +640,7 @@ class CheckoutValidationTests(unittest.TestCase):
 
     def test_in_progress_git_operation_fails(self):
         git_dir = self.root / ".git"
-        git_dir.mkdir()
+        git_dir.mkdir(exist_ok=True)
         (git_dir / "MERGE_HEAD").write_text("x\n", encoding="utf-8")
         with self.assertRaises(launcher.LauncherError) as raised:
             self._validate(checkout_responses(self.root, SHA_ONE))
@@ -829,19 +828,23 @@ class GitExecutionTests(unittest.TestCase):
         self.assertEqual(observed["creationflags"], 0x08000000)
         self.assertNotIn("start_new_session", observed)
 
-    def test_posix_foreign_group_is_not_signaled(self):
+    def test_posix_group_kill_uses_leader_pid_after_leader_exit(self):
         process = ReapingProcess()
-        killpg = mock.Mock()
+        killpg = mock.Mock(side_effect=ProcessLookupError)
         with mock.patch.object(launcher.shutil, "which", return_value="git"), \
                 mock.patch.object(launcher, "_is_windows", return_value=False), \
-                mock.patch.object(launcher.os, "getpgid", return_value=999), \
                 mock.patch.object(launcher.os, "killpg", killpg), \
                 mock.patch.object(launcher.subprocess, "Popen", lambda *a, **k: process):
             with self.assertRaises(launcher.LauncherError) as raised:
                 launcher._run_git(["fetch"], cwd=Path("/tmp"), timeout=1)
         self.assertEqual(raised.exception.category, "timeout")
-        self.assertFalse(raised.exception.tree_reaped)
-        killpg.assert_not_called()
+        self.assertTrue(raised.exception.tree_reaped)
+        # ``start_new_session`` guarantees pgid == pid, so the group is
+        # signalled and polled even when the leader has already exited.
+        self.assertEqual(
+            killpg.call_args_list,
+            [mock.call(4321, signal.SIGKILL), mock.call(4321, 0)],
+        )
 
     def test_windows_taskkill_nonzero_is_not_a_confirmed_reap(self):
         process = ReapingProcess()
@@ -959,16 +962,32 @@ class CloneTests(unittest.TestCase):
     def test_existing_directory_is_a_collision(self):
         target = self.temp / "existing"
         target.mkdir()
+        (target / "notes.txt").write_text("x", encoding="utf-8")
         with self.assertRaises(launcher.LauncherError) as raised:
             launcher._clone_checkout(target)
         self.assertEqual(raised.exception.category, "permission")
         self.assertTrue(target.is_dir())
+
+    def test_empty_existing_directory_is_cloned_into(self):
+        target = self.temp / "dev" / "3dsModeler"
+        target.mkdir(parents=True)
+
+        def clone(stub):
+            write_checkout(target)
+            return (0, "", "")
+
+        responses = checkout_responses(target, SHA_ONE)
+        responses[("clone", "--branch", "dev", launcher.REPO_URL, str(target))] = clone
+        with mock.patch.object(launcher, "_run_git", GitStub(responses)):
+            head = launcher._clone_checkout(target)
+        self.assertEqual(head, SHA_ONE)
 
     def test_interrupted_clone_leaves_partial_directory(self):
         target = self.temp / "partial"
 
         def fail(stub):
             target.mkdir()
+            (target / "partial.tmp").write_text("x", encoding="utf-8")
             return (1, "", "fatal: early EOF")
 
         stub = GitStub({("clone", "--branch", "dev", launcher.REPO_URL, str(target)): fail})
@@ -1003,7 +1022,7 @@ class WorkerTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["action"], "import-only")
         self.assertEqual(result["after_sha"], SHA_ONE)
-        self.assertEqual(stub.count("fetch", "--no-tags", "origin", "dev"), 1)
+        self.assertEqual(stub.count("fetch", "--no-tags", "origin", "+refs/heads/dev:refs/remotes/origin/dev"), 1)
         self.assertEqual(stub.count("pull", "--ff-only", "origin", "dev"), 0)
 
     def test_fast_forward_pull_imports_new_head(self):
@@ -1077,7 +1096,7 @@ class WorkerTests(unittest.TestCase):
 
         responses = checkout_responses(self.root, SHA_ONE)
         responses[("rev-parse", "HEAD")] = head
-        responses[("fetch", "--no-tags", "origin", "dev")] = fetch
+        responses[("fetch", "--no-tags", "origin", "+refs/heads/dev:refs/remotes/origin/dev")] = fetch
         result, _stub = self._run(responses)
         self.assertFalse(result["ok"])
         self.assertEqual(result["category"], "checkout_changed")
@@ -1157,6 +1176,60 @@ class WorkerTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["action"], "clone")
         self.assertEqual(result["after_sha"], SHA_ONE)
+
+    def test_empty_existing_directory_clones_without_touching_git_state(self):
+        target = self.temp / "dev" / "3dsModeler"
+        target.mkdir(parents=True)
+
+        def clone(stub):
+            write_checkout(target)
+            return (0, "", "")
+
+        responses = checkout_responses(target, SHA_ONE)
+        responses[("clone", "--branch", "dev", launcher.REPO_URL, str(target))] = clone
+        stub = GitStub(responses)
+        with mock.patch.object(launcher, "_run_git", stub):
+            result = launcher._worker_update(target, None, None, None, False)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["action"], "clone")
+        self.assertEqual(stub.calls[0]["args"][0:3], ("clone", "--branch", "dev"))
+
+    def test_non_repo_directory_names_entries_and_repair_steps(self):
+        target = self.temp / "3dsModeler"
+        target.mkdir()
+        for name in ("alpha", "build", "notes.txt"):
+            (target / name).write_text("x", encoding="utf-8")
+        (target / "max_pull_and_load.ms").write_text("x", encoding="utf-8")
+        (target / "zeta").write_text("x", encoding="utf-8")
+        stub = GitStub({})
+        with mock.patch.object(launcher, "_run_git", stub):
+            result = launcher._worker_update(target, None, None, None, False)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["category"], "not_a_checkout")
+        message = result["message"]
+        self.assertIn("%s already exists and is not a Git checkout" % target, message)
+        self.assertIn("found: alpha, build, max_pull_and_load.ms, ...", message)
+        self.assertNotIn("zeta", message)
+        self.assertIn(
+            "Save max_pull_and_load.ms outside %s (for example %s)"
+            % (target, target.parent / "max_pull_and_load.ms"),
+            message,
+        )
+        self.assertIn("leave %s empty or absent, then retry." % target, message)
+        self.assertEqual(stub.calls, [])
+
+    def test_non_repo_entry_names_are_sanitized_and_bounded(self):
+        target = self.temp / "3dsModeler"
+        target.mkdir()
+        (target / "evil\nname").write_text("x", encoding="utf-8")
+        (target / ("x" * 120)).write_text("x", encoding="utf-8")
+        stub = GitStub({})
+        with mock.patch.object(launcher, "_run_git", stub):
+            result = launcher._worker_update(target, None, None, None, False)
+        self.assertEqual(result["category"], "not_a_checkout")
+        self.assertIn("evilname", result["message"])
+        self.assertNotIn("evil\nname", result["message"])
+        self.assertNotIn("x" * 41, result["message"])
 
 
 # ---------------------------------------------------------------------------
@@ -1303,7 +1376,9 @@ class StartTests(unittest.TestCase):
             return SimpleNamespace(__file__=str(checkout / "__init__.py"))
 
         bridge_patch, worker_patch, update_patch = self._patch(result)
-        with bridge_patch, worker_patch, update_patch, \
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream), \
+                bridge_patch, worker_patch, update_patch, \
                 mock.patch.object(launcher, "load_checkout_package", side_effect=fake_load) as load:
             launcher.start(checkout=self.checkout)
             self.worker.run_target()
@@ -1312,10 +1387,30 @@ class StartTests(unittest.TestCase):
             self.bridge.deliver()
         self.assertEqual(load.call_count, 1)
         self.assertEqual(bootstrap.shown, 1)
+        self.assertIn("Loaded commit %s from" % SHA_ONE, stream.getvalue())
+        self.assertIn(launcher.LISTENER_TIP, stream.getvalue())
         session = sys.modules[launcher.SESSION_MODULE_NAME]
         self.assertFalse(session.in_flight)
         self.assertIsNone(session.worker)
         self.assertIsNone(session.bridge)
+
+    def test_noop_completion_prints_full_sha_and_listener_tip(self):
+        bootstrap = FakeBootstrap()
+        session = launcher._session_state()
+        session.checkout_root = str(self.checkout)
+        session.loaded_head_sha = SHA_ONE
+        session.bootstrap = bootstrap
+        result = launcher._result(ok=True, action="noop", after_sha=SHA_ONE)
+        bridge_patch, worker_patch, update_patch = self._patch(result)
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream), \
+                bridge_patch, worker_patch, update_patch:
+            launcher.start(checkout=self.checkout)
+            self.worker.run_target()
+            self.bridge.deliver()
+        self.assertEqual(bootstrap.shown, 1)
+        self.assertIn("Loaded commit %s." % SHA_ONE, stream.getvalue())
+        self.assertIn(launcher.LISTENER_TIP, stream.getvalue())
 
     def test_completion_requires_main_thread(self):
         errors = []
@@ -1441,6 +1536,40 @@ class EmbeddedLauncherTests(unittest.TestCase):
         exec(compile(embedded, "<3dsModeler-embedded>", "exec"), namespace)
         return namespace
 
+    def test_embedded_empty_directory_is_treated_as_missing(self):
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        calls: list = []
+        namespace["_clone_result"] = lambda: (
+            calls.append("clone")
+            or {"ok": True, "action": "clone", "head": SHA_ONE}
+        )
+        namespace["_existing_result"] = lambda: (
+            calls.append("existing")
+            or {"ok": True, "action": "existing", "head": SHA_ONE}
+        )
+        result = namespace["_update_result"]()
+        self.assertEqual(calls, ["clone"])
+        self.assertTrue(result["ok"])
+
+    def test_embedded_non_repo_directory_reports_entries(self):
+        (self.checkout / "max_pull_and_load.ms").write_text("x", encoding="utf-8")
+        (self.checkout / "notes.txt").write_text("x", encoding="utf-8")
+        namespace = self._embedded_namespace()
+        namespace["CHECKOUT"] = self.checkout
+        result = namespace["_update_result"]()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["category"], "not_a_checkout")
+        self.assertIn(
+            "%s already exists and is not a Git checkout" % self.checkout,
+            result["message"],
+        )
+        self.assertIn("found: max_pull_and_load.ms, notes.txt", result["message"])
+        self.assertIn(
+            "leave %s empty or absent, then retry." % self.checkout,
+            result["message"],
+        )
+
     def test_committed_ms_matches_generator_and_constants(self):
         ms_path = Path(launcher.__file__).parent / "max_pull_and_load.ms"
         text = ms_path.read_text(encoding="utf-8")
@@ -1505,6 +1634,7 @@ class EmbeddedLauncherTests(unittest.TestCase):
             "DUPLICATE_MESSAGE",
             "NO_QT_MESSAGE",
             "MAIN_THREAD_MESSAGE",
+            "LISTENER_TIP",
         ):
             self.assertEqual(namespace[name], getattr(launcher, name), name)
 
@@ -1531,7 +1661,10 @@ class EmbeddedLauncherTests(unittest.TestCase):
         self.assertEqual(result["remote_sha"], SHA_ONE)
         self.assertEqual(result["companion_sha256"], COMPANION_SHA)
         # Remote ancestry was proven before the companion waited on the callback.
-        self.assertIn(("fetch", "--no-tags", "origin", "dev"), git_calls)
+        self.assertIn(
+            ("fetch", "--no-tags", "origin", "+refs/heads/dev:refs/remotes/origin/dev"),
+            git_calls,
+        )
         self.assertIn(("merge-base", "--is-ancestor", SHA_ONE, SHA_ONE), git_calls)
         self.assertEqual(calls, [])
         bridge.deliver()
@@ -1584,8 +1717,8 @@ class EmbeddedLauncherTests(unittest.TestCase):
         write_checkout(self.checkout)
         write_companion(self.checkout)
         git_dir = self.checkout / ".git"
-        git_dir.mkdir()
-        (git_dir / "rebase-merge").mkdir()
+        git_dir.mkdir(exist_ok=True)
+        (git_dir / "rebase-merge").mkdir(exist_ok=True)
         namespace = self._embedded_namespace()
         namespace["CHECKOUT"] = self.checkout
         namespace["_run_git"] = embedded_git_stub(
@@ -1654,7 +1787,10 @@ class EmbeddedLauncherTests(unittest.TestCase):
         self.assertFalse((self.checkout / "tools" / "companion-ran.flag").exists())
         self.assertIn(launcher.RESTART_MESSAGE, stream.getvalue())
         # Drift is refused before any network call.
-        self.assertNotIn(("fetch", "--no-tags", "origin", "dev"), git_calls)
+        self.assertNotIn(
+            ("fetch", "--no-tags", "origin", "+refs/heads/dev:refs/remotes/origin/dev"),
+            git_calls,
+        )
         with self.assertRaises(RuntimeError) as raised:
             namespace["_schedule"](
                 bridge_factory=lambda handler: FakeBridge(),
@@ -1723,9 +1859,13 @@ class EmbeddedLauncherTests(unittest.TestCase):
         session = namespace["_session"]()
         bridge, worker = self._schedule_with_fakes(namespace)
         worker.run_target()
-        bridge.deliver()
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            bridge.deliver()
         self.assertTrue((self.checkout / "tools" / "companion-ran.flag").exists())
         self.assertTrue((self.checkout / "tools" / "companion-start.flag").exists())
+        self.assertIn("Loaded commit %s from" % SHA_ONE, stream.getvalue())
+        self.assertIn(launcher.LISTENER_TIP, stream.getvalue())
         self.assertEqual(
             byte_calls[0],
             ("cat-file", "-p", SHA_ONE + ":tools/max_pull_and_load.py"),
@@ -1774,7 +1914,7 @@ class EmbeddedLauncherTests(unittest.TestCase):
         self.assertTrue(session.restart_required)
         self.assertIn("changed after validation", stream.getvalue())
 
-    def test_embedded_checkout_filtered_bytes_are_accepted(self):
+    def test_embedded_worktree_crlf_bytes_are_accepted(self):
         write_checkout(self.checkout)
         path = write_companion(self.checkout)
         crlf = COMPANION_BYTES.replace(b"\n", b"\r\n")
@@ -1784,18 +1924,15 @@ class EmbeddedLauncherTests(unittest.TestCase):
         namespace["_run_git"] = embedded_git_stub(
             embedded_checkout_responses(self.checkout, SHA_ONE)
         )
-        namespace["_run_git_bytes"] = embedded_git_bytes_stub(
-            COMPANION_BYTES, filtered=crlf
-        )
+        namespace["_run_git_bytes"] = embedded_git_bytes_stub(COMPANION_BYTES)
         session = namespace["_session"]()
         bridge, worker = self._schedule_with_fakes(namespace)
         result = worker.run_target()
         bridge.deliver()
         self.assertTrue(result["ok"])
-        self.assertNotEqual(result["companion_sha256"], hashlib.sha256(crlf).hexdigest())
-        self.assertEqual(
-            result["companion_worktree_sha256"], hashlib.sha256(crlf).hexdigest()
-        )
+        self.assertEqual(result["companion_sha256"], COMPANION_SHA)
+        self.assertEqual(result["companion_normalized_sha256"], COMPANION_SHA)
+        self.assertNotEqual(COMPANION_SHA, hashlib.sha256(crlf).hexdigest())
         self.assertTrue((self.checkout / "tools" / "companion-start.flag").exists())
         self.assertFalse(session.restart_required)
 
@@ -1819,6 +1956,7 @@ class EmbeddedLauncherTests(unittest.TestCase):
     def test_embedded_clone_handoff_uses_queued_fake_bridge(self):
         namespace = self._embedded_namespace()
         namespace["CHECKOUT"] = self.checkout
+        namespace["_alias_loaded"] = lambda: False
         namespace["_update_result"] = lambda: {
             "ok": True,
             "action": "clone",
