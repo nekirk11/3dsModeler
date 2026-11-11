@@ -21,6 +21,7 @@ from max2025_menu_prototype.max_host.preparation import (
 
 try:
     from .test_maneuver_host import (
+        BooleanMaskBitArray,
         FakeModifier,
         FakeUndoFactory,
         V2Runtime,
@@ -28,6 +29,7 @@ try:
     )
 except ImportError:  # discovered as a top-level test module
     from test_maneuver_host import (
+        BooleanMaskBitArray,
         FakeModifier,
         FakeUndoFactory,
         V2Runtime,
@@ -38,6 +40,18 @@ except ImportError:  # discovered as a top-level test module
 def assessment(runtime=None, **kwargs):
     adapter, runtime, node, undo = v2_setup(runtime=runtime, **kwargs)
     return inspect_target(runtime), runtime, node, undo
+
+
+class PanelDriftRuntime(V2Runtime):
+    """Mutates the scene from the Modify-panel switch callback."""
+
+    panel_callback = None
+
+    def setCommandPanelTaskMode(self, mode):
+        super().setCommandPanelTaskMode(mode)
+        callback = self.panel_callback
+        if callback is not None:
+            callback(self)
 
 
 class InspectionTests(unittest.TestCase):
@@ -271,6 +285,50 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(prepared.status, "blocked")
         self.assertIn("changed before preparation", prepared.reason)
 
+    def test_panel_switch_drift_aborts_before_convert_collapse_and_level_write(self):
+        drifts = (
+            ("selection", lambda rt: setattr(rt, "selection", [])),
+            (
+                "stack",
+                lambda rt: rt.selection[0].modifiers.append(
+                    FakeModifier("TurboSmooth", handle=960)
+                ),
+            ),
+            ("time", lambda rt: setattr(rt, "currentTime", 42)),
+        )
+        for label, drift in drifts:
+            with self.subTest(tier="convert", drift=label):
+                runtime = PanelDriftRuntime()
+                adapter, runtime, node, undo = v2_setup(
+                    level=2, edges=(1,), base_class="Box", runtime=runtime
+                )
+                runtime.panel_callback = drift
+                prepared = prepare_target(
+                    runtime, inspect_target(runtime), undo_factory=undo
+                )
+                self.assertFalse(prepared.ok, prepared.reason)
+                self.assertNotIn("convertTo", runtime.v2_calls)
+                self.assertEqual(runtime.modPanel.writes, [])
+                self.assertEqual(runtime.subObjectLevel, 2)
+
+            with self.subTest(tier="collapse", drift=label):
+                runtime = PanelDriftRuntime()
+                modifier = FakeModifier("TurboSmooth", handle=961)
+                adapter, runtime, node, undo = v2_setup(
+                    level=2, edges=(1,), modifiers=(modifier,), runtime=runtime
+                )
+                runtime.panel_callback = drift
+                prepared = collapse_to_poly(
+                    runtime,
+                    inspect_target(runtime),
+                    confirmed=True,
+                    undo_factory=undo,
+                )
+                self.assertFalse(prepared.ok, prepared.reason)
+                self.assertNotIn("collapseStack", runtime.v2_calls)
+                self.assertEqual(runtime.modPanel.writes, [])
+                self.assertEqual(runtime.subObjectLevel, 2)
+
 
 class CollapseTests(unittest.TestCase):
     def test_unconfirmed_collapse_is_blocked_without_mutation(self):
@@ -396,6 +454,22 @@ class SwitchAndPivotTests(unittest.TestCase):
         self.assertEqual(outcome.context, "border")
         self.assertEqual(node.EditablePoly.conversions, [("Edge", "Border")])
         self.assertEqual(node.mesh.selections[ContextLevel.EDGE], {1})
+        self.assertEqual(runtime.subObjectLevel, 3)
+
+    def test_fill_pivot_reads_boolean_iterating_bitarray(self):
+        runtime = V2Runtime()
+        adapter, runtime, node, undo = v2_setup(
+            level=2, edges=(2, 4), runtime=runtime
+        )
+        prepared = prepare_target(runtime, inspect_target(runtime), undo_factory=undo)
+        self.assertTrue(prepared.ok, prepared.reason)
+        node.mesh.getOpenEdges = lambda target: BooleanMaskBitArray(
+            [False, True, False, True]
+        )
+        outcome = pivot_open_edges_to_border(runtime, prepared)
+        self.assertTrue(outcome.ok, outcome.reason)
+        self.assertEqual(outcome.indices, (2, 4))
+        self.assertEqual(node.EditablePoly.conversions, [("Edge", "Border")])
         self.assertEqual(runtime.subObjectLevel, 3)
 
     def test_fill_pivot_with_no_open_edges_is_blocked_without_writes(self):

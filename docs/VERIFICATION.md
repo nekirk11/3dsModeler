@@ -735,3 +735,42 @@ Max, Hotkey Editor category persistence, 3-tier preparation, native caddies and
 zero-selection modes, clean dissolve, `>` recovery commands, real Git clone and
 update, and Windows DPI/theming. Source, fake-runtime, literal-checkout, and
 portable results do not promote any native route.
+
+## Fix Cycle 1: boolean BitArray, caddy preview, scene drift and rollback latch (2026-11-11)
+
+**Scope:** four native-safety defects in the V2 host path.
+
+- `bitarray_indices` now treats a live `pymxs` BitArray that iterates its whole
+  capacity as booleans (`[False, True, False, True]`) as a 1-based mask, so
+  open-edge indices are `(2, 4)` in availability, preparation and dispatch.
+  `isEmpty` is read whether it is a property or a callable.
+- `EditablePoly.PreviewOn()` / `PreviewDragging()` are tracked on every
+  snapshot. An open native caddy blocks availability and execution; the block
+  clears only on a positive `PreviewOn() == False` (or a clean target change),
+  and an unreadable `PreviewOn()` after a launch fails closed.
+- Preparation and collapse revalidate the selected node, base object, modifier
+  stack, scene time and undo flags after the Modify-panel switch and before
+  `convertTo`, `collapseStack`, `setCurrentObject` or `subObjectLevel`.
+- A failed conversion/collapse whose owned undo chunk cannot be verified
+  reports `rollback_unverified` and latches the adapter's native V2 mutation
+  gate permanently.
+
+Regression coverage added 6 focused cases across the preparation and maneuver
+host suites (71 cases in those two suites): boolean-mask fill availability,
+dispatch and pivot; caddy preview tracking/clearing/fail-closed; panel-switch
+selection/stack/time drift before conversion and collapse; and conversion plus
+collapse rollback-latch persistence.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Focused V2 suites | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest max2025_menu_prototype.tests.test_preparation max2025_menu_prototype.tests.test_maneuver_host` | **71 tests, OK** |
+| Aggregate stdlib suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s max2025_menu_prototype/tests -p 'test_*.py'` | **646 tests, OK, 13 skipped** |
+| Literal checkout regression | `test_v2_checkout.LiteralCheckoutTests.test_full_suite_from_literal_3dsmodeler_checkout` | **1 test, OK** |
+| Python 3.11 syntax | `ast.parse(..., feature_version=(3, 11))` + `compile()` over all **64** prototype `*.py` files | **OK**, no bytecode written |
+| Deterministic portable ZIP | two fresh `tools/portable.py` builds into a new external directory | **identical bytes**, **81 members**, SHA-256 `5ec9bb7b3e18a59afed87ae51f6152438fb047b8c2956bd0cad5305960c6b1ba` |
+| Whitespace | `git diff --check` | **OK** |
+
+The 13 skips remain optional PySide6-only tests (`No module named 'PySide6'`).
+No assertion was deleted or skipped to obtain green. **Still NOT RUN:** live Max
+2025 caddy dialogs, `PreviewOn()` transitions, native conversion/collapse and
+undo restoration; all four fixes are proven with fake-runtime tests only.

@@ -38,6 +38,7 @@ from .operations import (
     GeometryInfo,
     GeometryReadError,
     OperationError,
+    bitarray_indices,
     read_geometry,
     read_selection_indices,
     read_settings,
@@ -385,6 +386,39 @@ def _editable_poly_interface(node: Any) -> Any:
     return value
 
 
+PREVIEW_STATES: Tuple[str, ...] = ("on", "off", "absent", "unknown")
+
+
+def read_ep_preview(ep: Any) -> Tuple[str, Optional[bool]]:
+    """Read ``EditablePoly.PreviewOn()``/``PreviewDragging()`` read-only.
+
+    Returns ``(state, dragging)`` where ``state`` is ``on``, ``off``,
+    ``absent`` (no ``PreviewOn`` member), or ``unknown`` (the member raised or
+    returned a non-Boolean/non-integer value).  The live preview belongs to the
+    native caddy, so an unreadable state after a caddy launch fails closed.
+    """
+
+    if ep is None or _is_undefined(ep):
+        return "absent", None
+    reader = getattr(ep, "PreviewOn", None)
+    if not callable(reader):
+        return "absent", None
+    try:
+        flag = _documented_flag(reader())
+    except Exception:
+        return "unknown", None
+    if flag is None:
+        return "unknown", None
+    dragging: Optional[bool] = None
+    drag_reader = getattr(ep, "PreviewDragging", None)
+    if callable(drag_reader):
+        try:
+            dragging = _documented_flag(drag_reader())
+        except Exception:
+            dragging = None
+    return ("on" if flag else "off"), dragging
+
+
 def _dependent_nodes(runtime: Any, base: Any) -> Optional[List[Any]]:
     refs = getattr(runtime, "refs", None)
     if refs is None or _is_undefined(refs):
@@ -539,6 +573,146 @@ def _write_show_end_result(owner: Any, value: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Panel-switch and rollback guards
+# ---------------------------------------------------------------------------
+
+
+def _time_token(runtime: Any) -> str:
+    try:
+        return str(getattr(runtime, "currentTime", "unreadable"))
+    except Exception:
+        return "unreadable"
+
+
+@dataclass(frozen=True)
+class _SceneGuard:
+    """Read-only scene identity captured before a panel or stack mutation."""
+
+    selected: Tuple[Optional[str], ...]
+    node: Optional[str]
+    base: Optional[str]
+    base_class: str
+    stack: Tuple[Tuple[str, str, bool], ...]
+    current_time: str
+    hold: Tuple[bool, bool, bool]
+
+
+def _selection_handles(runtime: Any) -> Tuple[Optional[str], ...]:
+    return tuple(
+        sorted(_stable_handle(runtime, selected) or "?" for selected in _selected_nodes(runtime))
+    )
+
+
+def _capture_scene_guard(
+    runtime: Any, node: Any, base: Any = None
+) -> _SceneGuard:
+    current_base = base if base is not None else _base_object(node)
+    return _SceneGuard(
+        selected=_selection_handles(runtime),
+        node=_stable_handle(runtime, node),
+        base=_stable_handle(runtime, current_base),
+        base_class=_class_name(runtime, current_base) if current_base is not None else "none",
+        stack=stack_identity(runtime, node),
+        current_time=_time_token(runtime),
+        hold=hold_flags(runtime),
+    )
+
+
+def _verify_scene_guard(
+    runtime: Any, guard: Any, node: Any, base: Any = None
+) -> str:
+    """Return a drift reason, or ``""`` when the captured scene is unchanged."""
+
+    if not isinstance(guard, _SceneGuard):
+        return "The preparation guard state is unavailable."
+    if _selection_handles(runtime) != guard.selected:
+        return "The object selection changed while the Modify panel was opening."
+    if _stable_handle(runtime, node) != guard.node:
+        return "The selected node changed while the Modify panel was opening."
+    current_base = base if base is not None else _base_object(node)
+    if _stable_handle(runtime, current_base) != guard.base:
+        return "The target base object changed while the Modify panel was opening."
+    if (
+        _class_name(runtime, current_base) if current_base is not None else "none"
+    ) != guard.base_class:
+        return "The target base object class changed while the Modify panel was opening."
+    if stack_identity(runtime, node) != guard.stack:
+        return "The modifier stack changed while the Modify panel was opening."
+    if _time_token(runtime) != guard.current_time:
+        return "The scene time changed while the Modify panel was opening."
+    holding, restoring, readable = hold_flags(runtime)
+    if not readable:
+        return "Undo/redo state could not be re-verified after the panel switch."
+    if holding or restoring:
+        return HOLD_REASON
+    if (holding, restoring, readable) != guard.hold:
+        return "Undo/redo state changed while the Modify panel was opening."
+    return ""
+
+
+@dataclass(frozen=True)
+class _PreparationState:
+    """Pre-mutation state used to judge rollback after a failed undo chunk."""
+
+    guard: _SceneGuard
+    geometry: Optional[GeometryInfo]
+
+
+def _capture_preparation_state(runtime: Any, node: Any) -> _PreparationState:
+    guard = _capture_scene_guard(runtime, node)
+    try:
+        geometry: Optional[GeometryInfo] = read_geometry(runtime, node)
+    except Exception:
+        geometry = None
+    return _PreparationState(guard=guard, geometry=geometry)
+
+
+def _restoration_problem(
+    runtime: Any, state: Any, node: Any, base: Any = None
+) -> str:
+    """Return why rollback is unverified, or ``""`` when state matches."""
+
+    if not isinstance(state, _PreparationState):
+        return "the pre-preparation state was not captured"
+    problem = _verify_scene_guard(runtime, state.guard, node, base)
+    if problem:
+        return problem
+    if state.geometry is None:
+        return ""
+    try:
+        after = read_geometry(runtime, node)
+    except Exception as exc:
+        return "geometry could not be re-read (%s)" % type(exc).__name__
+    if after.counts != state.geometry.counts or after.digest != state.geometry.digest:
+        return "mesh geometry was not restored"
+    return ""
+
+
+def _unverified_rollback(
+    runtime: Any, state: Any, node: Any, tier: str, message: str
+) -> PreparedTarget:
+    problem = _restoration_problem(runtime, state, node)
+    if problem:
+        return PreparedTarget(
+            ok=False,
+            status="error",
+            tier=tier,
+            reason=(
+                message
+                + " Rollback could not be verified (%s); native V2 topology "
+                "mutations must stay latched disabled." % problem
+            ),
+            rollback_unverified=True,
+        )
+    return PreparedTarget(
+        ok=False,
+        status="error",
+        tier=tier,
+        reason=message + " The owned undo chunk restored the pre-preparation state.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Assessment and prepared target
 # ---------------------------------------------------------------------------
 
@@ -586,10 +760,14 @@ class TargetAssessment:
     hold_reason: str = ""
     holding: bool = False
     restore_or_redoing: bool = False
+    preview_state: str = "absent"
+    preview_dragging: Optional[bool] = None
 
     def __post_init__(self) -> None:
         if self.tier not in PREP_TIERS:
             raise ValueError("Unsupported preparation tier: %r" % (self.tier,))
+        if self.preview_state not in PREVIEW_STATES:
+            raise ValueError("Unsupported preview state: %r" % (self.preview_state,))
 
     @property
     def target_token(self) -> str:
@@ -620,6 +798,7 @@ class PreparedTarget:
     task_mode: str = "unknown"
     converted: bool = False
     collapsed: bool = False
+    rollback_unverified: bool = False
 
     def __post_init__(self) -> None:
         if self.status not in ("prepared", "noop", "blocked", "error"):
@@ -1003,6 +1182,9 @@ def inspect_target(runtime: Any) -> TargetAssessment:
     assessment.hold_reason = ""
     assessment.holding = holding
     assessment.restore_or_redoing = restoring
+    assessment.preview_state, assessment.preview_dragging = read_ep_preview(
+        assessment.ep
+    )
     return assessment
 
 
@@ -1056,8 +1238,14 @@ def _set_current_base(runtime: Any, node: Any, base: Any) -> None:
 def _prepare_ready(
     runtime: Any, assessment: TargetAssessment, undo_factory: Any = None
 ) -> PreparedTarget:
+    guard = _capture_scene_guard(runtime, assessment.node, assessment.base)
     try:
         _ensure_modify_panel(runtime)
+        drift = _verify_scene_guard(
+            runtime, guard, assessment.node, assessment.base
+        )
+        if drift:
+            raise PreparationError(drift)
         _set_current_base(runtime, assessment.node, assessment.base)
     except PreparationError as exc:
         return PreparedTarget(
@@ -1084,8 +1272,14 @@ def _prepare_base_with_modifiers(
             reason=SHOW_END_RESULT_REASON,
         )
     changed = not previous
+    guard = _capture_scene_guard(runtime, assessment.node, assessment.base)
     try:
         _ensure_modify_panel(runtime)
+        drift = _verify_scene_guard(
+            runtime, guard, assessment.node, assessment.base
+        )
+        if drift:
+            raise PreparationError(drift)
         _set_current_base(runtime, assessment.node, assessment.base)
         if changed:
             _write_show_end_result(owner, True)
@@ -1132,14 +1326,23 @@ def _prepare_convert(
             tier="convert",
             reason="Editable Poly conversion is unavailable in this host.",
         )
+    pre_state = _capture_preparation_state(runtime, node)
     try:
         _ensure_modify_panel(runtime)
     except PreparationError as exc:
         return PreparedTarget(
             ok=False, status="error", tier="convert", reason=str(exc)
         )
+    drift = _verify_scene_guard(runtime, pre_state.guard, node)
+    if drift:
+        return PreparedTarget(
+            ok=False, status="error", tier="convert", reason=drift
+        )
 
     def edit() -> _PrepOutcome:
+        drift = _verify_scene_guard(runtime, pre_state.guard, node)
+        if drift:
+            raise PreparationError(drift)
         converter(node, convert_target)
         new_base = _base_object(node)
         if new_base is None or not _class_is(runtime, new_base, "Editable_Poly"):
@@ -1162,11 +1365,8 @@ def _prepare_convert(
         hold_guard=lambda: _current_hold_reason(runtime),
     )
     if outcome.status == "error" or not outcome.completed:
-        return PreparedTarget(
-            ok=False,
-            status="error",
-            tier="convert",
-            reason=outcome.message,
+        return _unverified_rollback(
+            runtime, pre_state, node, "convert", outcome.message
         )
 
     base = _base_object(node)
@@ -1433,8 +1633,12 @@ def collapse_to_poly(
             )
 
     stack_before = stack_identity(runtime, node)
+    pre_state = _capture_preparation_state(runtime, node)
 
     def edit() -> _PrepOutcome:
+        drift = _verify_scene_guard(runtime, pre_state.guard, node)
+        if drift:
+            raise PreparationError(drift)
         if command_name == "convertTo":
             command(node, convert_target)
         else:
@@ -1461,6 +1665,11 @@ def collapse_to_poly(
         return PreparedTarget(
             ok=False, status="error", tier="blocked", reason=str(exc)
         )
+    drift = _verify_scene_guard(runtime, pre_state.guard, node)
+    if drift:
+        return PreparedTarget(
+            ok=False, status="error", tier="blocked", reason=drift
+        )
     outcome = run_undoable(
         "3dsModeler V2: collapse to Editable Poly",
         edit,
@@ -1468,8 +1677,8 @@ def collapse_to_poly(
         hold_guard=lambda: _current_hold_reason(runtime),
     )
     if outcome.status == "error" or not outcome.completed:
-        return PreparedTarget(
-            ok=False, status="error", tier="blocked", reason=outcome.message
+        return _unverified_rollback(
+            runtime, pre_state, node, "blocked", outcome.message
         )
 
     base = _base_object(node)
@@ -1571,6 +1780,16 @@ def switch_prepared_context(
         )
 
     previous_level = prepared.raw_level
+    guard = _capture_scene_guard(runtime, prepared.node, prepared.base)
+    drift = _verify_scene_guard(runtime, guard, prepared.node, prepared.base)
+    if drift:
+        return SwitchOutcome(
+            False,
+            "blocked",
+            drift,
+            context=prepared.context,
+            raw_level=previous_level,
+        )
     converted = False
     if convert_selection:
         try:
@@ -1588,6 +1807,15 @@ def switch_prepared_context(
                 raw_level=previous_level,
             )
         converted = True
+        drift = _verify_scene_guard(runtime, guard, prepared.node, prepared.base)
+        if drift:
+            return SwitchOutcome(
+                False,
+                "error",
+                "The scene changed during selection conversion: %s" % drift,
+                context=prepared.context,
+                raw_level=previous_level,
+            )
 
     ok, reason = _set_level(runtime, index)
     if not ok:
@@ -1646,10 +1874,10 @@ def _open_edges(runtime: Any, node: Any) -> Optional[Tuple[int, ...]]:
         return None
     if bitarray is None or _is_undefined(bitarray):
         return ()
-    try:
-        return tuple(sorted(int(value) for value in bitarray))
-    except Exception:
+    indices = bitarray_indices(bitarray, runtime)
+    if indices is None:
         return None
+    return tuple(sorted(indices))
 
 
 def _set_edge_selection(runtime: Any, node: Any, indices: Sequence[int]) -> bool:

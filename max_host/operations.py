@@ -205,6 +205,28 @@ def _as_indices(value: Any) -> Optional[Tuple[int, ...]]:
     return tuple(sorted(set(indices)))
 
 
+def _as_boolean_mask(value: Any) -> Optional[Tuple[int, ...]]:
+    """Interpret a boolean-iterating pymxs BitArray as a 1-based mask.
+
+    A live ``pymxs`` BitArray iterates its whole capacity as booleans
+    (``[False, True, False, ...]``) instead of yielding set indices.  The
+    position of every ``True`` value is its 1-based index.  A mixed or
+    non-boolean sequence is not a mask and returns ``None``.
+    """
+
+    try:
+        flags = []
+        for item in value:
+            if not isinstance(item, bool):
+                return None
+            flags.append(item)
+    except Exception:
+        return None
+    if not flags:
+        return ()
+    return tuple(index for index, flag in enumerate(flags, 1) if flag)
+
+
 def _as_ordered_indices(value: Any) -> Optional[Tuple[int, ...]]:
     """Preserve native order for geometry fingerprints (winding matters)."""
 
@@ -243,11 +265,18 @@ def bitarray_indices(bitarray: Any, runtime: Any = None) -> Optional[Tuple[int, 
     if bitarray is None or _is_undefined(bitarray):
         return ()
     try:
-        if bool(getattr(bitarray, "isEmpty")):
+        empty = getattr(bitarray, "isEmpty")
+        if callable(empty):
+            empty = empty()
+        if empty is not None and bool(empty):
             return ()
     except Exception:
         pass
     indices = _as_indices(bitarray)
+    if indices is not None:
+        return indices
+    # A real pymxs BitArray iterates booleans rather than set indices.
+    indices = _as_boolean_mask(bitarray)
     if indices is not None:
         return indices
     if runtime is not None:

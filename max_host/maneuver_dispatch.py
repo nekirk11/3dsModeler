@@ -29,6 +29,7 @@ from .bindings import (
 )
 from .operations import (
     OperationError,
+    bitarray_indices,
     clean_dissolve_edges,
     read_geometry,
     read_selection_indices,
@@ -289,10 +290,10 @@ def _open_edges(runtime: Any, prepared: PreparedTarget) -> Tuple[int, ...]:
         raise OperationError(
             "Open edges could not be read (%s)." % type(exc).__name__
         ) from exc
-    try:
-        return tuple(sorted(int(value) for value in bitarray))
-    except Exception as exc:
-        raise OperationError("Open-edge indices could not be coerced.") from exc
+    indices = bitarray_indices(bitarray, runtime)
+    if indices is None:
+        raise OperationError("Open-edge indices could not be coerced.")
+    return tuple(sorted(indices))
 
 
 def read_ep_mode(runtime: Any, ep: Any) -> Tuple[str, bool]:

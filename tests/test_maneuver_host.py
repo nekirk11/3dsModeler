@@ -221,6 +221,51 @@ class V2Runtime(FakeRuntime):
         node.modifiers = []
 
 
+class BooleanMaskBitArray:
+    """Live ``pymxs`` BitArray behavior: iterates capacity as booleans."""
+
+    def __init__(self, flags) -> None:
+        self.flags = tuple(bool(flag) for flag in flags)
+
+    @property
+    def count(self) -> int:
+        return len(self.flags)
+
+    @property
+    def numberSet(self) -> int:
+        return sum(self.flags)
+
+    @property
+    def isEmpty(self) -> bool:
+        return not any(self.flags)
+
+    def __iter__(self):
+        return iter(self.flags)
+
+    def __len__(self) -> int:
+        return len(self.flags)
+
+
+class MutatingFailingConvertRuntime(V2Runtime):
+    """Fails conversion after mutating geometry, with no restore callback."""
+
+    def convertTo(self, node, target):
+        self.accessed.append("convertTo")
+        self.v2_calls.append("convertTo")
+        node.mesh.faces.pop()
+        raise RuntimeError("conversion failed after mutation")
+
+
+class MutatingFailingCollapseRuntime(V2Runtime):
+    """Fails collapse after mutating geometry, with no restore callback."""
+
+    def collapseStack(self, node):
+        self.accessed.append("collapseStack")
+        self.v2_calls.append("collapseStack")
+        node.mesh.faces.pop()
+        raise RuntimeError("collapse failed after mutation")
+
+
 def v2_setup(
     level: int = 2,
     verts=(),
@@ -428,6 +473,50 @@ class CaddyExecutionTests(unittest.TestCase):
         self.assertEqual(runtime.v2_calls, [])
         self.assertEqual(runtime.modPanel.writes, [])
 
+    def test_live_preview_tracks_dragging_blocks_clears_and_fails_closed(self):
+        adapter, runtime, node, undo = v2_setup(level=2, edges=(1,))
+        adapter._atlas = self._bevel_atlas()
+        launched = adapter.execute(request(adapter, "bevel"))
+        self.assertEqual(launched.status, "launched", launched.message)
+        self.assertTrue(adapter._caddy_active)
+
+        node.EditablePoly.PreviewOn = lambda: True
+        node.EditablePoly.PreviewDragging = lambda: True
+        active_snapshot = adapter.snapshot()
+        self.assertEqual(adapter._last_assessment.preview_state, "on")
+        self.assertIs(adapter._last_assessment.preview_dragging, True)
+        self.assertTrue(active_snapshot.caddy_active)
+        self.assertFalse(adapter.availability("bevel", active_snapshot).enabled)
+        blocked = adapter.execute(request(adapter, "bevel"))
+        self.assertEqual(blocked.status, "blocked")
+        self.assertEqual(node.EditablePoly.popups, ["Chamfer"])
+
+        node.EditablePoly.PreviewOn = lambda: False
+        cleared_snapshot = adapter.snapshot()
+        self.assertFalse(cleared_snapshot.caddy_active)
+        self.assertFalse(adapter._caddy_active)
+        self.assertTrue(
+            adapter.availability("bevel", cleared_snapshot).enabled,
+            adapter.availability("bevel", cleared_snapshot).reason,
+        )
+
+        relaunched = adapter.execute(request(adapter, "bevel"))
+        self.assertEqual(relaunched.status, "launched", relaunched.message)
+        self.assertTrue(adapter._caddy_active)
+
+        def unreadable():
+            raise RuntimeError("PreviewOn unavailable")
+
+        node.EditablePoly.PreviewOn = unreadable
+        unknown_snapshot = adapter.snapshot()
+        self.assertEqual(adapter._last_assessment.preview_state, "unknown")
+        self.assertTrue(adapter._caddy_active)
+        self.assertTrue(unknown_snapshot.caddy_active)
+        self.assertFalse(adapter.availability("bevel", unknown_snapshot).enabled)
+        still_blocked = adapter.execute(request(adapter, "bevel"))
+        self.assertEqual(still_blocked.status, "blocked")
+        self.assertIn("caddy", still_blocked.message.lower())
+
 
 class CommandModeExecutionTests(unittest.TestCase):
     def test_standard_mode_uses_toggle_command_mode_and_verifies_readback(self):
@@ -604,6 +693,36 @@ class ContextAndPivotTests(unittest.TestCase):
         self.assertEqual(result.status, "applied", result.message)
         self.assertIn(("ConvertSelection", "Edge", "Border", False), node.EditablePoly.calls)
 
+    def _fill_atlas(self):
+        return atlas(
+            spec("fill", border=route(with_selection=descriptor("button_op", "Cap")))
+        )
+
+    def test_fill_availability_reads_boolean_iterating_bitarray(self):
+        adapter, runtime, node, undo = v2_setup(level=2, edges=(2, 4))
+        adapter._atlas = self._fill_atlas()
+        node.mesh.getOpenEdges = lambda target: BooleanMaskBitArray(
+            [False, True, False, True]
+        )
+        row = adapter.availability(
+            "fill", adapter.snapshot(), pivot_context="border"
+        )
+        self.assertTrue(row.enabled, row.reason)
+
+    def test_fill_dispatch_accepts_boolean_mask_open_edges(self):
+        adapter, runtime, node, undo = v2_setup(
+            level=2, edges=(2, 4), open_edges=(2, 4)
+        )
+        adapter._atlas = self._fill_atlas()
+        node.mesh.getOpenEdges = lambda target: BooleanMaskBitArray(
+            [False, True, False, True]
+        )
+        result = adapter.execute(request(adapter, "fill", pivot="border"))
+        self.assertEqual(result.status, "applied", result.message)
+        self.assertEqual(node.EditablePoly.conversions, [("Edge", "Border")])
+        self.assertIn(("buttonOp", "Cap"), node.EditablePoly.calls)
+        self.assertEqual(node.mesh.selections[ContextLevel.EDGE], {2, 4})
+
     def test_ordinary_pivot_does_not_convert_selection(self):
         adapter, runtime, node, undo = v2_setup(level=2, edges=(1,), faces=(1,))
         adapter._atlas = atlas(
@@ -709,6 +828,53 @@ class GuardTests(unittest.TestCase):
         blocked = adapter.availability("select_loop", adapter.snapshot())
         self.assertFalse(blocked.enabled)
         self.assertIn("latch", blocked.reason.lower())
+
+    def test_failed_convert_and_collapse_with_unverified_rollback_latch(self):
+        # Conversion failure after an un-restored geometry mutation.
+        convert_runtime = MutatingFailingConvertRuntime()
+        convert_adapter, runtime, node, undo = v2_setup(
+            level=2,
+            edges=(1,),
+            base_class="Box",
+            runtime=convert_runtime,
+            undo=FakeUndoFactory(restore=None),
+        )
+        convert_adapter._atlas = self._caddy_atlas()
+        conversion = convert_adapter.execute(request(convert_adapter, "bevel"))
+        self.assertEqual(conversion.status, "error", conversion.message)
+        self.assertIn("latched", conversion.message)
+        self.assertIsNotNone(convert_adapter.rollback_lockout_reason)
+        blocked = convert_adapter.execute(request(convert_adapter, "bevel"))
+        self.assertEqual(blocked.status, "blocked")
+        self.assertIn("latched", blocked.message.lower())
+
+        # Collapse failure after an un-restored geometry mutation.
+        collapse_runtime = MutatingFailingCollapseRuntime()
+        collapse_adapter, runtime, node, undo = v2_setup(
+            level=0,
+            modifiers=(FakeModifier("TurboSmooth", handle=930),),
+            runtime=collapse_runtime,
+            undo=FakeUndoFactory(restore=None),
+        )
+        collapse_adapter._atlas = atlas(
+            spec(
+                "bake",
+                object=route(
+                    with_selection=descriptor("composite", "collapse_to_poly")
+                ),
+            )
+        )
+        collapse = collapse_adapter.execute(
+            request(collapse_adapter, "bake", confirmed=True)
+        )
+        self.assertEqual(collapse.status, "error", collapse.message)
+        self.assertIn("latched", collapse.message)
+        self.assertIsNotNone(collapse_adapter.rollback_lockout_reason)
+        blocked = collapse_adapter.execute(
+            request(collapse_adapter, "bake", confirmed=True)
+        )
+        self.assertEqual(blocked.status, "blocked")
+        self.assertIn("latched", blocked.message.lower())
 
     def test_prepare_tier_two_preserves_modifiers_and_show_end_result(self):
         modifier = FakeModifier("TurboSmooth", handle=901)

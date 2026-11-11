@@ -50,6 +50,7 @@ from .operations import (
     MutableTarget,
     OperationError,
     bitarray_count,
+    bitarray_indices,
     read_geometry,
     read_selection_indices,
     read_settings,
@@ -1600,6 +1601,17 @@ def _hold_guard(runtime: Any) -> Optional[str]:
     return None
 
 
+CADDY_ACTIVE_REASON = (
+    "A native caddy preview is still open; it must be completed or cancelled "
+    "natively before another maneuver or context switch."
+)
+ROLLBACK_LOCKOUT_REASON = (
+    "An edit failed and rollback could not be verified; native V2 topology "
+    "is latched disabled until Max is restarted. Inspect the scene and use "
+    "Max Undo manually; do not retry blindly."
+)
+
+
 class ManeuverHostAdapter:
     """V2 ``ManeuverHost`` implementation beside the unchanged legacy adapter.
 
@@ -1627,6 +1639,7 @@ class ManeuverHostAdapter:
         self._topology_disabled_reason: Optional[str] = None
         self._ambiguous_mode = False
         self._caddy_active = False
+        self._caddy_target_token: Optional[str] = None
         self._last_snapshot: Any = None
         self._last_assessment: Optional[TargetAssessment] = None
         self._last_maneuver_snapshot: Any = None
@@ -1703,8 +1716,16 @@ class ManeuverHostAdapter:
         ep_mode = "none"
         if assessment.ep is not None:
             ep_mode, _readable = maneuver_dispatch.read_ep_mode(runtime, assessment.ep)
+        preview_active = assessment.preview_state == "on"
+        caddy_active = bool(self._caddy_active or preview_active)
         mode_token = _digest(
-            "mode", tool_mode, ep_mode, self._ambiguous_mode, assessment.raw_level
+            "mode",
+            tool_mode,
+            ep_mode,
+            self._ambiguous_mode,
+            assessment.raw_level,
+            assessment.preview_state,
+            assessment.preview_dragging,
         )
         geometry_part = (
             (assessment.geometry.counts, assessment.geometry.digest)
@@ -1728,6 +1749,8 @@ class ManeuverHostAdapter:
                 assessment.panel_ready,
                 tool_mode,
                 ep_mode,
+                assessment.preview_state,
+                assessment.preview_dragging,
                 assessment.holding,
                 assessment.restore_or_redoing,
             )[:16],
@@ -1741,7 +1764,7 @@ class ManeuverHostAdapter:
             mode_token,
             self._topology_disabled_reason,
             self._ambiguous_mode,
-            self._caddy_active,
+            caddy_active,
         )
         return make_snapshot(
             context=assessment.context,
@@ -1755,9 +1778,43 @@ class ManeuverHostAdapter:
             hold_active=bool(assessment.holding or not assessment.hold_ok),
             restore_or_redoing=bool(assessment.restore_or_redoing),
             mode_token=mode_token,
-            caddy_active=self._caddy_active,
+            caddy_active=caddy_active,
             safety_token=safety,
         )
+
+    def _refresh_caddy_state(self, assessment: TargetAssessment) -> None:
+        """Track the native caddy preview without assuming it is gone.
+
+        ``PreviewOn() == False`` is the only positive proof that the native
+        dialog released its preview; a clean target change also releases the
+        block.  An absent or unreadable ``PreviewOn()`` after a launch stays
+        latched so an open caddy can never authorize another mutation.
+        """
+
+        if not self._caddy_active:
+            return
+        if assessment.preview_state == "off":
+            self._caddy_active = False
+            self._caddy_target_token = None
+            return
+        if (
+            self._caddy_target_token is not None
+            and assessment.node_token != self._caddy_target_token
+        ):
+            self._caddy_active = False
+            self._caddy_target_token = None
+
+    def _caddy_block_reason(self, assessment: Any = None) -> str:
+        if self._caddy_active:
+            return CADDY_ACTIVE_REASON
+        if assessment is not None and getattr(assessment, "preview_state", "") == "on":
+            return CADDY_ACTIVE_REASON
+        return ""
+
+    def _latch_rollback(self) -> str:
+        if self._topology_disabled_reason is None:
+            self._topology_disabled_reason = ROLLBACK_LOCKOUT_REASON
+        return self._topology_disabled_reason
 
     def snapshot(self) -> Any:
         """Read a read-only V2 snapshot with opaque identity tokens."""
@@ -1765,6 +1822,7 @@ class ManeuverHostAdapter:
         runtime = self._resolve_runtime()
         self._assert_main_thread()
         assessment = inspect_target(runtime)
+        self._refresh_caddy_state(assessment)
         snapshot = self._build_snapshot(runtime, assessment)
         self._last_assessment = assessment
         self._last_snapshot = snapshot
@@ -1864,12 +1922,8 @@ class ManeuverHostAdapter:
                 "The previous Graphite SwiftLoop mode cannot be exited safely; "
                 "live 2025 validation is required before chaining.",
             )
-        if self._caddy_active:
-            return Availability(
-                False,
-                "A native caddy is still open; it must be completed or cancelled "
-                "natively before another maneuver.",
-            )
+        if self._caddy_active or getattr(snapshot, "caddy_active", False):
+            return Availability(False, CADDY_ACTIVE_REASON)
         if getattr(snapshot, "hold_active", False) or getattr(
             snapshot, "restore_or_redoing", False
         ):
@@ -2020,6 +2074,15 @@ class ManeuverHostAdapter:
                 status="blocked",
                 action_id=maneuver_id,
                 message=self._topology_disabled_reason,
+            )
+        caddy_reason = self._caddy_block_reason(
+            assessment
+        ) or (
+            CADDY_ACTIVE_REASON if getattr(fresh, "caddy_active", False) else ""
+        )
+        if caddy_reason:
+            return LaunchResult(
+                status="blocked", action_id=maneuver_id, message=caddy_reason
             )
         hold_reason = _hold_guard(runtime)
         if hold_reason:
@@ -2181,6 +2244,11 @@ class ManeuverHostAdapter:
             prepared = _passive_prepared(assessment)
 
         if prepared is None or not prepared.ok:
+            message = (
+                getattr(prepared, "reason", "") or "Target preparation failed."
+            )
+            if prepared is not None and prepared.rollback_unverified:
+                message = message + " " + self._latch_rollback()
             return LaunchResult(
                 status=(
                     "error"
@@ -2188,7 +2256,7 @@ class ManeuverHostAdapter:
                     else "blocked"
                 ),
                 action_id=maneuver_id,
-                message=getattr(prepared, "reason", "") or "Target preparation failed.",
+                message=message,
             )
         if prepared.node_token != assessment.node_token:
             return LaunchResult(
@@ -2340,6 +2408,9 @@ class ManeuverHostAdapter:
             return self._after_error(
                 maneuver_id, runtime, pre_dispatch_safety, outcome.message
             )
+        if routed_kind == "caddy" and outcome.status in ("launched", "applied"):
+            self._caddy_active = True
+            self._caddy_target_token = destination_assessment.node_token
         if outcome.status == "applied":
             self._refresh_presentation(runtime)
         return LaunchResult(
@@ -2383,11 +2454,7 @@ class ManeuverHostAdapter:
                 message=message
                 + " The owned undo chunk restored the pre-dispatch state.",
             )
-        self._topology_disabled_reason = (
-            "An edit failed and rollback could not be verified; native V2 topology "
-            "is latched disabled until Max is restarted. Inspect the scene and use "
-            "Max Undo manually; do not retry blindly."
-        )
+        self._topology_disabled_reason = ROLLBACK_LOCKOUT_REASON
         return LaunchResult(
             status="error",
             action_id=maneuver_id,
@@ -2450,6 +2517,15 @@ class ManeuverHostAdapter:
             return LaunchResult(
                 status="blocked", action_id=action_id, message=hold_reason
             )
+        caddy_reason = self._caddy_block_reason(
+            self._last_assessment
+        ) or (
+            CADDY_ACTIVE_REASON if getattr(fresh, "caddy_active", False) else ""
+        )
+        if caddy_reason:
+            return LaunchResult(
+                status="blocked", action_id=action_id, message=caddy_reason
+            )
 
         if destination == "object" and not convert_selection:
             try:
@@ -2486,12 +2562,15 @@ class ManeuverHostAdapter:
                 )
         prepared = prepare_target(runtime, assessment, undo_factory=self._undo_factory)
         if not prepared.ok:
+            message = prepared.reason or "Target preparation failed."
+            if prepared.rollback_unverified:
+                message = message + " " + self._latch_rollback()
             return LaunchResult(
                 status=(
                     "error" if prepared.status == "error" else "blocked"
                 ),
                 action_id=action_id,
-                message=prepared.reason or "Target preparation failed.",
+                message=message,
             )
         outcome = switch_prepared_context(
             runtime,
@@ -2547,7 +2626,18 @@ class ManeuverHostAdapter:
             ),
             "idle_mode": idle,
             "ep_mode": ep_mode,
-            "caddy_active": self._caddy_active,
+            "preview_state": (
+                assessment.preview_state
+                if assessment is not None
+                else "unavailable"
+            ),
+            "caddy_active": bool(
+                self._caddy_active
+                or (
+                    assessment is not None
+                    and assessment.preview_state == "on"
+                )
+            ),
             "ambiguous_mode": self._ambiguous_mode,
             "rollback_lockout": self._topology_disabled_reason is not None,
             "loaded_sha": self._loaded_sha or "unknown",
@@ -2719,10 +2809,10 @@ def _read_open_edges(
         bitarray = polyop.getOpenEdges(assessment.node)
     except Exception:
         return None
-    try:
-        return tuple(sorted(int(value) for value in bitarray))
-    except Exception:
+    indices = bitarray_indices(bitarray, runtime)
+    if indices is None:
         return None
+    return tuple(sorted(indices))
 
 
 def _context_mismatch(
