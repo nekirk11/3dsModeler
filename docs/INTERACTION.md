@@ -1,15 +1,104 @@
 # Interaction contract and sandbox walkthroughs
 
-This document describes the shared Python controller behavior used by the Max
-tools panel, the optional Qt popup, and the browser sandbox. The panel and popup
-are native-controller renderers; the browser host is **simulated**. Max native
-input routing, hold-release, and runtime behavior remain **NOT RUN**.
+> **Current native entry (V2): the 3dsModeler Spotlight palette.** The
+> controller/panel/gesture contract below is V1, retained for legacy tests and
+> the browser sandbox. It is not the normal native launch path. See the V2
+> section first, then treat the rest of this page as historical reference.
 
-The primary native entry is now the Max-parented tools panel
-(`bootstrap.show_tools()`). The separate popup remains optional and latched-only;
-the retired hold launcher is a click-to-open alias for the panel, not a
-trigger-release claim. See [`NATIVE-MODELING.md`](NATIVE-MODELING.md) for the
-frozen parameter/lifecycle contract and manual acceptance cases.
+## V2 Spotlight palette workflow
+
+The V2 palette is a single compact, Max-parented popup/tool window driven by
+`core/palette_controller.py` and rendered by `qt_ui/palette.py`. It uses Max's
+existing `QApplication`; it never creates a second one. Opening, raising, or
+refocusing reuses the same widget instance.
+
+### Focus and typing
+
+- A real `QLineEdit` receives focus after show/raise and owns the platform
+  blinking caret. Typing is never faked in a label.
+- A scoped `ShortcutOverride` filter accepts editing/navigation shortcuts while
+  the search line or a palette descendant owns focus. It then lets the actual
+  text `KeyPress` reach the line edit. `W`, `E`, `R`, `X`, `T`, `C`, digits
+  `1`–`5`, and Space therefore type normally instead of firing Max tools.
+- `Ctrl+A/C/V/X`, cursor movement, selection, IME/composed Unicode,
+  Backspace/Delete, and Home/End remain available. No permanent global OS hook
+  is installed.
+- Focus-out/window deactivate cancels exactly once. Child pill clicks and inline
+  confirmation focus movement are not external blur. The controller uses a
+  guarded deferred check with session/generation validation. No scene action
+  runs on blur.
+
+### Context pills and keys
+
+| Input | Result |
+| --- | --- |
+| Header pills `[0 Obj] [1 Vert] [2 Edge] [3 Border] [4 Face] [5 Elem]` | plain click = standard context switch; Ctrl+Click = switch with selection conversion |
+| Tab / Shift+Tab (including Backtab) | cycles contexts, not widget focus traversal |
+| Alt+0..Alt+5 | chooses a context |
+| Typed `1`–`5` | text only; never a context switch |
+| Up/Down | moves the highlighted row, including disabled rows |
+| Enter | dispatches only the one highlighted, currently valid row; auto-repeat and stale signals cannot dispatch twice |
+| Esc | closes and cancels any pending inline confirmation |
+| Typed `>` | system-only search: `> Pull Updates (Git)`, `> Diagnostics`, `> Unload UI` |
+
+A palette pill switch keeps palette/text focus after success. A context macro
+invoked outside the palette switches without opening UI. A new context always
+starts a new generation, so no stale selected row survives.
+
+### Search, aliases, and pivots
+
+Search normalizes Unicode (NFKC/casefold/whitespace) and fuzzy-matches the
+label, ID, every shipped Houdini Modeler/Blender/Maya/Max alias, and optional
+checkout-root `user_aliases.json` entries. Deterministic ranking is active
+context first, then pinned, match score, atlas declaration order, and ID.
+
+A maneuver valid in another context appears once, with a deterministic pivot
+label (`[→ Border]`, `[→ Face]`, …). Enter switches context and then executes.
+`fill` from selected open edges is the narrow converting exception: only open
+edges are converted/expanded to a Border selection before Cap; closed-only or
+empty input blocks. Other pivots switch level without converting selection.
+
+### Dispatch, caddies, and teardown
+
+1. Activation re-snapshots the host and compares the exact safety/selection/
+   target/mode identity. An equal-count but different selection is stale.
+2. `collapse_to_poly` first produces an inline confirmation with destructive
+   scope and a fresh one-use token. Cancel/blur/expiry changes nothing.
+3. One dispatch is marked in flight; the synchronous pre-dispatch hook hides the
+   palette, removes transient input interception, and restores viewport focus.
+   A throwing hook blocks dispatch.
+4. The host adapter applies approved preparation, revalidates, and dispatches
+   exactly one fixed handler. Count routing uses the fresh destination
+   selection: `>0` → caddy/handler, `0` → command mode.
+5. A caddy/mode result is `launched`, not a geometry result. Caddy Cancel
+   cancels only its own preview; the earlier auto-prep conversion is separately
+   undoable. No undo hold spans the interactive caddy.
+6. `Esc`/outside focus restores the saved viewport focus only when Max remains
+   the active application. Teardown disposes only owned UI/timers/filters and
+   never deletes macros, removes hotkeys, clears the rollback lockout, or exits a
+   foreign tool.
+
+### Styling
+
+Every state has an explicit color: background `#12151d`, input `#0b0d11`, text
+`#e8ebf2`, buttons `#242b38`, accent `#67b8ff`, disabled `#6c7487`, border
+`#333b4d`, plus hover/pressed/checked/selected/focus states. No native white
+Windows button or inheritance-dependent style is relied on. Windows DPI and
+theming remain a manual test.
+
+### Sandbox
+
+The browser sandbox remains a separate simulated renderer over the V1 shared
+controller. Every host result there is **SIMULATED**; it cannot control Max and
+is not evidence for any V2 native route.
+
+---
+
+## Historical V1 interaction contract
+
+The following describes the frozen V1 shared controller used by the legacy
+tools panel, optional popup, and browser sandbox. It is retained for
+compatibility tests and is not a normal V2 native launcher.
 
 Initial experiment settings: **tap threshold 220 ms**, **neutral radius 12
 logical pixels**. Both are adjustable inside the profile bounds (100–600 ms,

@@ -694,9 +694,44 @@ loaded-session no-pull refusal.
 | Aggregate stdlib suite | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s max2025_menu_prototype/tests -p 'test_*.py' -v` | **402 tests, OK, 12 skipped** |
 | Python 3.11 AST + compile | `ast.parse(..., feature_version=(3, 11))` and `compile()` over all **43** prototype `*.py` files | **OK**, no bytecode written |
 | Whitespace | `git diff --check` | **OK** |
-| Protected baseline | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m max2025_menu_prototype.tools.baseline verify --manifest /tmp/opencode/max2025-menu-prototype-baseline.json` | **293 protected entries unchanged** |
+| Protected baseline | `PYTHONDONTWRITEBYTECODE=1 python3 -B -m max2025_menu_prototype.tools.baseline verify --manifest "$BASELINE_MANIFEST"` | **293 protected entries unchanged** |
 
 **Still NOT RUN for these fixes:** live 3ds Max 2025 Qt queued delivery after
 the relay split, a live fresh-session fast-forward from GitHub, and
 MAXScript/runtime execution. The bridge and pull paths are simulated in tests
 only.
+
+## V2 integration final verification (2026-11-11)
+
+**Scope:** the composed V2 tree on `dev` after the A/B/C leases were handed to
+the integration owner. Native Max behavior remains **NOT RUN**; the protected
+baseline remains **BLOCKED** for agents under the no-read rule and is left to
+the external custodian. No private filesystem paths are recorded here.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Aggregate stdlib suite | package registered from the repository root, then `unittest.defaultTestLoader.discover("tests", "test_*.py")` | **640 tests, OK, 13 skipped** |
+| Skip reasons | `TextTestRunner` skipped list | all **13** are optional PySide6 tests: 12 legacy panel/dialog + 1 offscreen V2 palette smoke; `No module named 'PySide6'` |
+| Literal checkout regression | `test_v2_checkout.LiteralCheckoutTests.test_full_suite_from_literal_3dsmodeler_checkout` | **1 test, OK** (fresh subprocess, literal `3dsModeler` root, whole suite inside) |
+| Python 3.11 syntax | `ast.parse(..., feature_version=(3, 11))` + `compile()` over all **63** `*.py` files in `core/`, `max_host/`, `qt_ui/`, `sandbox/`, `tools/`, `tests/` | **OK**, no bytecode written |
+| JavaScript syntax | `node --check sandbox/static/app.js` | **OK** |
+| Deterministic portable ZIP | two fresh `tools/portable.py` builds into a new external directory | **identical bytes**, **81 members**, manifest/sidecar SHA-256 agree |
+| Archive contents | manifest + `zipfile` member audit | `core/maneuvers.json` present; `user_aliases.json` absent; every member size/hash matches the manifest |
+| Atlas size | `core/maneuvers.json` load | **36** maneuvers, `schema_version` 2 |
+| Generated MAXScript | working tree `tools/max_pull_and_load.ms` | **25,495 bytes**, equal to `render_ms_source()` in the launcher tests |
+| Whitespace | `git diff --check` | **OK** |
+| Protected baseline | external custodian with `$BASELINE_MANIFEST` | **BLOCKED — not run by this agent**; source inspection shows it opens protected bytes |
+
+Aggregate composition includes the existing V1 regression suites (catalog,
+profile, controller, sandbox, fake-runtime host, launcher) plus the V2 atlas,
+search, palette controller/model, preparation, dispatch, clean dissolve,
+security, macro, checkout, and integration suites. The 13 skips are runtime
+availability only; no assertion was deleted or skipped to obtain green.
+
+**Still NOT RUN:** every live Max 2025 row in
+[`TOMORROW-MAX2025.md`](TOMORROW-MAX2025.md) and
+[`MAX2025-VALIDATION.md`](MAX2025-VALIDATION.md) — palette typing/focus inside
+Max, Hotkey Editor category persistence, 3-tier preparation, native caddies and
+zero-selection modes, clean dissolve, `>` recovery commands, real Git clone and
+update, and Windows DPI/theming. Source, fake-runtime, literal-checkout, and
+portable results do not promote any native route.

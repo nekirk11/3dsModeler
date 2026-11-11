@@ -1,8 +1,10 @@
 # Native modeling tools prototype (experimental)
 
 An original, deliberately experimental prototype for a native 3ds Max 2025
-modeling loop. The primary entry is the Max-parented tools panel; the browser
-sandbox is a secondary **simulation** and cannot control Max. No 3ds Max 2025
+modeling loop. The primary entry is the V2 **3dsModeler Spotlight palette**:
+one search field over the 36-maneuver atlas, six context pills, cross-context
+pivots, and fixed native caddy/command-mode dispatch. The browser sandbox
+remains a secondary **simulation** and cannot control Max. No 3ds Max 2025
 installation was available here, so every native runtime check in
 [`docs/MAX2025-VALIDATION.md`](docs/MAX2025-VALIDATION.md) remains **NOT RUN**.
 Nothing here is production-ready, host-validated, or a replacement for a
@@ -12,19 +14,58 @@ The source is published at `https://github.com/nekirk11/3dsModeler` on branch
 `dev`. The preferred delivery is a Git checkout at `C:\dev\3dsModeler`; the
 source-only ZIP remains a separate fallback layout.
 
-W1 froze the catalog, parameter schemas, result statuses, and controller
-lifecycle. W3 implemented the Qt tools panel, one-shot parameter dialog, and
-bootstrap composition. W2 implemented the native adapter/operation mappings for
-the catalog's P0/P1/P2 IDs, including mode ownership and undo transactions. All
-bindings still carry `runtime_status="not_run"`; source/fake-runtime coverage is
-not a Max success claim.
+V2 adds the host-free atlas/search/controller path beside the frozen V1
+catalog/parameter controller. The V1 panel, popup, and one-shot parameter dialog
+remain in the tree for legacy tests and the sandbox, but no V1 widget is
+composed on a normal V2 launch. All native bindings still carry
+`runtime_status="not_run"`; source/fake-runtime coverage is not a Max success
+claim.
+
+## V2 at a glance
+
+- **Atlas and overlays.** `core/maneuvers.json` is bundled, validated JSON with
+  exactly 36 stable maneuver IDs and non-executable reference metadata.
+  `core/atlas.py` loads it without touching the network; an optional
+  checkout-root `user_aliases.json` may add aliases/pins/hides only. A malformed
+  or foreign overlay is ignored as a whole with one sanitized warning. The
+  overlay is excluded from packaging and is never required.
+- **Search-first workflow.** Open the palette, type across labels, IDs, Houdini
+  Modeler/Blender/Maya/Max aliases, and user aliases. An exact/prefix/token match
+  ranks first; active-context rows precede pivot rows; a single deterministic
+  pivot row is shown with `[→ Border]`, `[→ Face]`, etc. `>` searches the three
+  recovery commands only.
+- **Six contexts, one seam.** Public contexts are `object`, `vertex`, `edge`,
+  `border`, `face`, `element` (Max levels 0–5). V1's `polygon` is mapped only by
+  the explicit legacy helpers; JSON never accepts `polygon`.
+- **Safe target preparation.** Tier 1 converts one non-instanced primitive or
+  mesh to Editable Poly under undo; Tier 2 steps down to an existing poly base
+  while preserving a Symmetry/TurboSmooth stack and showing the end result;
+  Tier 3 blocks instanced/shared bases, unreadable state, or non-poly + modifier
+  targets. Any Edit Poly modifier blocks topology editing unless *Collapse to
+  Poly* is explicitly confirmed.
+- **Live caddies versus modes.** Selected components route to native
+  `PopupDialog` caddies (Chamfer, Extrude, Bevel, Inset, ConnectEdges, Weld,
+  Tessellate, MSmooth, and the bridge targets); zero components route to fixed
+  command modes. A caddy/mode result is `launched`, never a geometry claim.
+  Cancel leaves no caddy edit; the separate auto-prep conversion remains its own
+  undo record.
+- **Clean Edge Dissolve.** `dissolve` in Edge context removes selected edges,
+  then removes only recorded inline valence-2 endpoint candidates in the same
+  undo chunk, restoring context/selection and rolling back on identity
+  ambiguity.
+- **Persistent macros, local hotkeys.** The launcher writes the owned
+  `3dsModeler.mcr` and registers its `"3dsModeler"` category in the live
+  session. Hotkeys are assigned manually in **Customize > Hotkey Editor**.
+  Hotkey execution is a synchronous local-checkout load with no network.
 
 ## First Max 2025 test: Git delivery (preferred)
 
 Requirements: 64-bit Windows, 3ds Max 2025/2025.1 with its bundled Python (3.11)
 and PySide6 6.5, and `git` on `PATH`. Public HTTPS access is enough for the
 first clone. Do not install another Python or Qt into Max, and do not add a
-startup script, registry entry, or permanent hotkey.
+startup script or registry entry. The launcher intentionally installs the
+persistent `3dsModeler` MacroScripts; it never assigns or overwrites a hotkey
+automatically.
 
 1. Obtain [`tools/max_pull_and_load.ms`](tools/max_pull_and_load.ms) from the
    published `dev` branch and review it before running. In a fresh Max 2025
@@ -33,17 +74,23 @@ startup script, registry entry, or permanent hotkey.
 2. The script checks Max's main thread and existing `QApplication`, then either
    clones `https://github.com/nekirk11/3dsModeler.git` (branch `dev`) to
    `C:\dev\3dsModeler` or validates the existing checkout. Git runs in a worker;
-   the Listener shows finite progress lines and the tools panel opens on the
-   main thread when the import succeeds. Save the `.ms` **outside**
+   the Listener shows finite progress lines and the Spotlight palette opens on
+   the main thread when the import succeeds. Save the `.ms` **outside**
    `C:\dev\3dsModeler` (for example `C:\dev\max_pull_and_load.ms`) and leave
    that directory empty or absent; a non-empty directory that is not a Git
    checkout stops with a finite repair message.
-3. Record the printed checkout root and full 40-character commit SHA in
+3. The installer writes/verifies `3dsModeler.mcr` and, when `pymxs` is
+   available, loads it immediately so the `"3dsModeler"` category appears in
+   **Customize > Hotkey Editor** without a restart. Assign
+   `ThreeDsModeler_Search` (and any `ThreeDsModeler_Context*` /
+   `...Convert` variants you want) manually. A restart is not required for
+   the category, but re-run the `.ms` after an update to refresh definitions.
+4. Record the printed checkout root and full 40-character commit SHA in
    [`docs/TOMORROW-MAX2025.md`](docs/TOMORROW-MAX2025.md). Diagnostics are
    Python: switch the Listener to the Python tab, or in the MAXScript tab run
    `python.Execute "from max2025_menu_prototype.max_host import bootstrap; print(bootstrap.report_diagnostics())"`.
-   Do not run the optional menu, diagnostics, or `uninstall()` automatically
-   after the first panel launch.
+   Do not run updates, diagnostics, or `uninstall()` automatically after the
+   first palette launch.
 
 The Python companion `tools/max_pull_and_load.py` owns the Git update,
 import-alias, commit-guard, and restart policy. The standalone `.ms` works even
@@ -69,7 +116,7 @@ launcher never prompts for credentials and never resets or cleans your tree.
   `C:\dev\3dsModeler` to `sys.path`.
 - Do not run concurrent Max processes against one checkout, and do not edit or
   pull external changes while the prototype is loaded.
-- A panel opening is not a native geometry success. Every Max runtime check
+- A palette opening is not a native geometry success. Every Max runtime check
   remains **NOT RUN** until recorded from a real session.
 
 ## ZIP fallback (separate layout)
@@ -158,14 +205,13 @@ if not _same_path(loaded_init, EXPECTED_INIT):
 
 print("max2025_menu_prototype:", loaded_init)
 print("bootstrap:", Path(bootstrap.__file__).resolve())
-bootstrap.show_tools()  # first block: only the shared tools panel
+bootstrap.show_palette()  # primary V2 entry: one Spotlight palette
 ```
 
-The panel stays alive through bootstrap's existing references. Optional menu,
-diagnostics, and cleanup are **separate** calls, not one consecutive script:
+The palette stays alive through bootstrap's existing references. Optional
+diagnostics and cleanup are **separate** calls, not one consecutive script:
 
 ```python
-# bootstrap.show_menu()                 # optional latched context menu
 # print(bootstrap.report_diagnostics())  # read-only default report
 # bootstrap.uninstall()                 # remove prototype UI; not committed geometry
 ```
@@ -219,81 +265,88 @@ from max2025_menu_prototype.max_host import bootstrap
 
 print("max2025_menu_prototype:", package.__file__)
 print("bootstrap:", bootstrap.__file__)
-bootstrap.show_tools()      # primary: Max-parented native modeling panel
+bootstrap.show_palette()    # primary: V2 Spotlight palette
 PY
 ```
 
 Call these helpers on Max's main thread; the prototype creates no worker threads
-for UI. Optional menu, diagnostics, and cleanup are **separate** calls:
+for UI. Optional diagnostics and cleanup are **separate** calls:
 
 ```python
-bootstrap.show_menu()                  # optional: shared latched context menu
 print(bootstrap.report_diagnostics())  # read-only default report
 bootstrap.uninstall()                  # remove prototype UI; not committed geometry
 ```
 
-- `show_tools()` creates or raises the one shared panel. The panel, popup, and
-  modal parameter dialog share one controller and one existing `QApplication`.
-- `install_launcher()` is now a **click-to-open alias** for `show_tools()`. The
-  old hold-to-open launcher is retired; this prototype makes no viewport
-  hold-release, trigger-release, or shortcut claim.
-- `show_menu()` opens the optional shared menu in latched mode. Its popup has
-  no trigger-release input; explicit click/Enter commits.
-- `uninstall()` closes pending prototype dialogs, clears the hook this bootstrap
-  registered, disposes only prototype widgets, and invalidates pending input.
-  It does not undo already committed scene edits. It never exits a user-owned
-  viewport tool. Exact owned-mode cleanup uses only the public
-  `MenuController.release_owned_native_mode()` → adapter `release_owned_mode()`
-  seam; a foreign/stale mode is blocked and no private adapter field is read.
-- Nothing is installed at startup; no registry change, permanent hotkey, global
-  OS hook, or right-click replacement is made.
+- `show_palette()` composes one `PaletteController` + `ManeuverHostAdapter` +
+  `SearchPalette` and raises/refocuses the single existing palette.
+- `show_tools()`, `show_menu()`, and `install_launcher()` forward to
+  `show_palette()` for native compatibility; they no longer compose V1 widgets.
+- `switch_context(context, convert_selection=False)` works without opening the
+  palette, for the persistent context macros. `polygon` is rejected in the V2
+  API; use `face`.
+- `uninstall()` closes pending V2 UI, invalidates timers/signals, and drops
+  strong UI references. It does not delete `3dsModeler.mcr`, remove hotkeys,
+  clear the rollback lockout, undo edits, or exit a foreign/native tool.
+- Persistent macros and manually assigned hotkeys are intentionally out-of-memory
+  Max configuration; see **Clean removal** below.
 
-## Native workflow
+## Native V2 workflow
 
-1. Select exactly one valid, non-instanced **Editable Poly** base object. Open
-   the Modify panel so `modPanel.getCurrentObject() == node.baseObject`; zero
-   modifiers. Primitives, meshes, multiple objects, shared/instanced geometry,
-   nonempty stacks, and active Edit Poly modifiers stay unsupported.
-2. Run `bootstrap.show_tools()` on Max's main thread.
-3. Use the panel's sub-object level buttons. They call the shared
-   `MenuController.invoke("context.*")` path, change `subObjectLevel` only, and
-   may be used with zero components. They never convert geometry, repair a
-   selection, or change the stack.
-4. Select vertices/edges/borders/polygons/elements in the native Max viewport.
-5. Choose **Open context menu** or press the panel action path. Parameterized
-   rows open one modal, typed, no-preview dialog showing the native target,
-   context, component count, units, semantics, and destructive-confirmation
-   text. **Apply once** collects values; **Cancel**, Escape, or window close
-   returns nothing and makes no edit.
-6. The controller takes a fresh snapshot and capability map after the dialog.
-   A changed selection (even with equal count), level, target, stack, panel,
-   time, transform, mode, or soft-selection blocks the commit. No scene repair
-   is attempted.
-7. Results distinguish **APPLIED ONCE**, **LAUNCHED (mode entry only)**,
-   **BLOCKED**, **ERROR**, **CANCELLED**, and **NO CHANGES**. Max Undo remains
-   native; `uninstall()` never undoes a committed edit.
-8. **Refresh context** is read-only. Because the frozen controller has no
-   separate refresh entry, the panel uses the public `open` + immediate `cancel`
-   contract and skips while a menu or parameter request is pending. It never
-   edits geometry or reaches through private host state.
+1. Select one non-instanced node and choose the working context. Primitives and
+   Editable Meshes are converted to Editable Poly under one undo record when
+   they are otherwise eligible; an existing poly with Symmetry/TurboSmooth is
+   edited at its base while the stack stays intact and the end result is shown.
+   Instanced/shared bases, non-poly bases with modifiers, unreadable state, and
+   any Edit Poly modifier block topology editing; the block explains whether
+   *Convert to Poly* or explicit *Collapse to Poly* is the intended remedy.
+2. Open the palette with `bootstrap.show_palette()`, the `ThreeDsModeler_Search`
+   macro, or an assigned hotkey. The real search line owns focus and shows a
+   caret; typing `w/e/r/x/t/c`, digits `1`–`5`, or Space stays text.
+3. A plain pill click switches context; Ctrl+Click converts the selection with
+   `EditablePoly.ConvertSelection`. Tab/Shift+Tab and Alt+0..5 also switch.
+   Ordinary switches never convert geometry or selection.
+4. Search by label, ID, or cross-DCC/user alias. Enter dispatches only the
+   highlighted, currently valid row. A pivot row such as `[→ Border]` switches
+   first; `fill` from selected open edges is the one deliberate open-edge
+   conversion exception.
+5. Selected components route to a live native caddy (or a fixed immediate
+   handler); zero components route to a matching command mode. Count routing
+   uses the fresh destination selection, never the object-node count.
+6. Results distinguish **LAUNCHED** (caddy/mode entry only), **APPLIED**,
+   **BLOCKED**, **ERROR**, **CANCELLED**, and **NOOP**/SIMULATED. A caddy is
+   interactive: its preview/OK/Cancel and later undo are native. The separate
+   auto-prep conversion completed *before* the caddy and remains its own undo
+   record; no Qt loop or undo hold is kept across caddy lifetime.
+7. `dissolve` in Edge context removes the selected edges and, in the same undo
+   chunk, only the recorded inline valence-2 endpoints. Corners, branches,
+   non-candidate vertices, coincident slots, and unsupported nonmanifold cases
+   are preserved; ambiguous identity rolls the whole chunk back.
+8. `collapse_to_poly` is the only stack-collapse action and requires an inline
+   destructive confirmation. `> Diagnostics` is read-only and works with no
+   selection; `> Unload UI` disposes only in-memory UI.
 
-The catalog now defines level, selection, modeling, and mode action IDs, and
-`max_host/bindings.py` has a fixed native binding for every ID except the
-core-owned Repeat row. A catalog row or panel button still proves nothing about
-native success. The panel shows the host adapter's enabled/disabled decisions;
-the detailed implemented/blocked/deferred matrix and per-binding citations are
-in [`docs/MAX2025-VALIDATION.md`](docs/MAX2025-VALIDATION.md). All native rows
+V1's tools panel, latched popup, and typed one-shot parameter dialog are
+historical. Their frozen catalog/parameter contracts remain in the tree and are
+exercised by legacy tests and the browser sandbox, but a normal V2 launch never
+composes them and no blind numeric default can be dispatched from the palette.
+
+The atlas defines all 36 maneuver IDs. `max_host/maneuver_dispatch.py` has a
+fixed reviewed handler for every descriptor `(kind, target)` pair or an explicit
+blocked reason. A row or a launched caddy still proves nothing about native
+success; the per-route matrix is in
+[`docs/MAX2025-VALIDATION.md`](docs/MAX2025-VALIDATION.md). All native rows
 remain **NOT RUN** in Max.
 
 ## What is real, simulated, or unvalidated
 
 | Part | Status here |
 | --- | --- |
-| Python core controller, catalog, profile validation, parameter schemas, simulator | Real shared code, exercised by stdlib tests |
-| Max tools panel, parameter dialog, bootstrap composition (`qt_ui/`, `max_host/bootstrap.py`) | Implemented W3 renderers; scoped fake/fixture tests only, **NOT RUN in Max** |
-| Max adapter and native operations (`max_host/`) | W2 implemented source mappings for catalog P0/P1/P2 IDs; fake-runtime/undo tests only, **NOT RUN in Max** |
-| Browser sandbox | Real stdlib server and shared controller with a **simulated** host; cannot control Max |
-| Optional Qt popup/desktop simulation | Shared-controller renderer using `SimulatedHost`; not a native-success demonstration |
+| Python V2 atlas/search/controller/simulator (`core/`) | Real stdlib code, exercised by stdlib tests; no Qt/Max imports |
+| Spotlight palette (`qt_ui/palette.py`, `palette_model.py`) | Implemented renderer; fake-Qt/offscreen tests only, **NOT RUN in Windows Max** |
+| V2 host adapter/preparation/dispatch (`max_host/`) | Fixed registry plus 3-tier preparation, caddies/modes, clean dissolve; fake-runtime tests only, **NOT RUN in Max** |
+| V1 catalog/controller/panel/popup/parameter dialog | Frozen legacy path; retained for legacy tests and the sandbox, not a normal V2 launch |
+| Persistent MacroScripts (`3dsModeler.mcr`) | Deterministic generator, ownership/conflict guard, `fileIn` activation; **NOT RUN in Max** |
+| Browser sandbox | Real stdlib server with a **simulated** host; cannot control Max |
 | Git launcher (`tools/max_pull_and_load.ms`, `tools/max_pull_and_load.py`) | Source-complete and stdlib/alias tested; **NOT RUN** in Max or against live GitHub from Max |
 | Native runtime validation | **NOT RUN — no 3ds Max 2025 installation** |
 
@@ -419,12 +472,18 @@ python3 tools/portable.py --help
 
 The Max tests use a fake runtime and are contract/safety tests only. They do not
 prove anything about Autodesk's host. The portable tests cover the deterministic
-ZIP allowlist, sidecar hashes, exclusion/security rules, extraction, and
-host-free import. They are source tests, not a Max or Windows delivery test.
-The watcher/launcher tests exercise fake process/bridge seams only; MAXScript
-execution and live GitHub transport remain **NOT RUN**. Final integration counts
-and skip reasons belong in [`docs/VERIFICATION.md`](docs/VERIFICATION.md); do not
-run the aggregate suite against concurrently edited paths.
+ZIP allowlist, sidecar hashes, `core/maneuvers.json` inclusion, overlay exclusion
+without reading its bytes, extraction, and host-free import. `test_macros.py`
+covers the generated `.ms`, all 13 macro names/category, `.mcr` ownership and
+`fileIn` activation, and the network-free local hotkey path. `test_v2_security.py`
+is the AST/call-spy gate against data-chosen execution. `test_v2_checkout.py`
+runs the whole suite from a checkout literally named `3dsModeler` (with a child
+sentinel to avoid recursion). They are source tests, not a Max or Windows
+delivery test. The watcher/launcher tests exercise fake process/bridge seams
+only; MAXScript execution and live GitHub transport remain **NOT RUN**. Final
+integration counts and skip reasons belong in
+[`docs/VERIFICATION.md`](docs/VERIFICATION.md); do not run the aggregate suite
+against concurrently edited paths.
 
 ## Clean removal
 
@@ -432,9 +491,23 @@ run the aggregate suite against concurrently edited paths.
 bootstrap.uninstall()
 ```
 
+Unload UI first; it disposes only in-memory widgets/hooks and leaves the scene,
+active native tools, the rollback lockout, and the persistent macros intact.
+
 Then delete the `C:\dev\3dsModeler` checkout (or the extracted
-`max2025_menu_prototype/` directory for the ZIP fallback). There are no startup
-scripts, registry entries, permanent hotkeys, scene objects, or modifiers.
+`max2025_menu_prototype/` directory for the ZIP fallback). The launcher creates
+no startup script or registry entry, but it **does** create one owned file,
+`3dsModeler.mcr`, in Max's user MacroScripts directory. It does not delete that
+file, remove hotkey assignments, or clear loaded-SHA/restart state
+automatically. To remove macros and hotkeys, do it explicitly and separately:
+
+1. Close Max (or at least unload the UI), then delete `3dsModeler.mcr` from
+   Max's user MacroScripts folder (`getDir #userMacros`).
+2. In **Customize > Hotkey Editor**, remove only the `"3dsModeler"` category
+   assignments you created. No assignment was made for you and no W/E/R/Space
+   binding was overwritten.
+3. Restart Max and confirm the category is gone.
+
 Committed native modeling edits remain normal Max undoable geometry; uninstall
 removes prototype UI and pending input, **not** already committed scene edits.
 It does not cancel foreign viewport tools. The prototype does not replace

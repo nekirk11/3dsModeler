@@ -8,6 +8,86 @@ No native action, viewport gesture, DPI case, focus case, undo case, or host
 state was exercised in 3ds Max. The sandbox is simulated and is not evidence
 either. Do not promote this adapter based on this document.
 
+## V2 maneuver/route ledger
+
+`core/maneuvers.json` is the authoritative machine-readable atlas for all 36
+IDs, every legal context, both selection routes, the actual `api` call text, and
+official `doc_url` links. `max_host/maneuver_dispatch.py` is the authoritative
+fixed handler registry. This table summarizes runtime status; **every row is
+`NOT RUN`** in Max 2025.
+
+| ID | V2 contexts | `with_selection` route | `empty_selection` route | Blocker / live requirement |
+| --- | --- | --- | --- | --- |
+| `bevel` | vertex, edge, face | caddy `Chamfer` (V/E), `Bevel` (F) | mode `ChamferVertex`/`ChamferEdge`/`Bevel` | none known |
+| `extrude` | vertex, edge, face | caddy `Extrude` | mode `ExtrudeVertex`/`ExtrudeEdge`/`ExtrudeFace` | none known |
+| `inset` | face | caddy `Inset` | mode `InsetFace` | none known |
+| `dissolve` | vertex, edge | button `Remove` (V); composite `clean_dissolve_edges` (E) | — | vertex-slot identity under `Remove` needs live proof |
+| `delete` | vertex, edge, border, face, element | button `Delete` | — | component-only semantics need live proof |
+| `loop_cut` | edge, face | caddy `ConnectEdges` (E); Graphite SwiftLoop (F) | mode `SwiftLoop` (E/F) | SwiftLoop provenance/idle-exit needs live proof |
+| `cut` | vertex, edge, face | mode `CutVertex`/`CutEdge`/`CutFace` | same mode | none known |
+| `quick_slice` | vertex, edge, face | mode `QuickSlice` | same mode | none known |
+| `bridge` | edge, border, face | caddy `BridgeEdge`/`BridgeBorder`/`BridgePolygon` | mode bridge targets | **BLOCKED** empty routes: no verified EP 2025 launcher |
+| `fill` | border | button `Cap` | — | open-edge pivot needs live proof |
+| `weld` | vertex, edge | caddy `Weld` → `#WeldSelected` | mode `Weld` | enum mapping needs live proof |
+| `target_weld` | vertex, edge | mode `Weld` | same mode | distinct from threshold weld; live proof |
+| `collapse` | vertex, edge, face | button `Collapse` | — | none known |
+| `split_edges` | edge | button `SplitEdges` | — | none known |
+| `break_vertices` | vertex | button `BreakVertex` | — | none known |
+| `select_loop` | edge | button `SelectEdgeLoop` | — | none known |
+| `select_ring` | edge | button `SelectEdgeRing` | — | none known |
+| `grow_selection` | vertex, edge, border, face, element | button `GrowSelection` | — | none known |
+| `shrink_selection` | vertex, edge, border, face, element | button `ShrinkSelection` | — | none known |
+| `clear_selection` | vertex, edge, border, face, element | polyop `clear_selection` | same noop | none known |
+| `convert_to_verts` | all six | context switch `vertex` | same | none known |
+| `convert_to_edges` | all six | context switch `edge` | same | none known |
+| `convert_to_borders` | all six | context switch `border` | same | closed-edge-only must report no open border |
+| `convert_to_faces` | all six | context switch `face` | same | none known |
+| `subdivide` | vertex, edge, face | caddy `Tessellate` | — | tessellation ≠ smooth subdivision; live proof |
+| `smooth` | vertex, edge, face | caddy `MSmooth` → `#MeshSmooth` | — | enum mapping needs live proof |
+| `flip_normals` | face, element | button `FlipNormals` | — | none known |
+| `planar_x` | vertex, edge, border, face, element | button `MakePlanarInX` | — | none known |
+| `planar_y` | vertex, edge, border, face, element | button `MakePlanarInY` | — | none known |
+| `planar_z` | vertex, edge, border, face, element | button `MakePlanarInZ` | — | none known |
+| `move` | all six | fixed `max move` | blocked without selection | entering a tool is `launched`, not applied |
+| `rotate` | all six | fixed `max rotate` | blocked without selection | same |
+| `scale` | all six | fixed `max scale` | blocked without selection | same |
+| `frame_selection` | all six | fixed `max zoomext sel` | blocked without selection | same |
+| `convert_to_poly` | object | composite `convert_to_poly` | blocked without node | Tier-1 restrictions; live proof |
+| `collapse_to_poly` | object | composite `collapse_to_poly` | blocked without node | destructive confirmation; instancing live proof |
+
+`with_selection` requires a fresh component count `> 0` after preparation and
+pivot conversion; `empty_selection` requires exactly `0`. A missing route is a
+finite blocked reason, never an inferred alternative operation. All descriptors
+are validated against `TARGETS_BY_KIND`; malicious kinds/targets are rejected
+before dispatch. `api`/`doc_url` are never inputs to dispatch.
+
+### Outstanding live gates
+
+- **Bridge empty selection.** Published Editable Poly 2025 material does not
+  list the requested bridge command-mode launchers. The atlas keeps the
+  semantic targets, but the host registry returns an explicit blocked reason.
+  Do not add an Edit_Poly modifier or dispatch a default edit as a substitute.
+- **SwiftLoop.** It is a Graphite `PolyToolsPolyDraw` handler, not a proven
+  EditablePoly enum. Mode ownership and safe idle-exit need live validation
+  before chained launches are claimed.
+- **Weld/MSmooth.** Stable semantic names map to `#WeldSelected`/`#MeshSmooth`;
+  verify the popup enums in 2025.
+- **Clean dissolve slot identity.** Verify that `Remove` preserves recorded
+  vertex slot/flag identity; otherwise the operation must roll back rather than
+  use nearest-position matching.
+- **Safe base editing under modifiers.** Validate Symmetry/TurboSmooth with
+  `showEndResult=True`, and confirm any Edit Poly modifier blocks.
+
+All live checks in [`TOMORROW-MAX2025.md`](TOMORROW-MAX2025.md) remain **NOT RUN**.
+
+---
+
+## Historical V1 adapter ledger
+
+The remainder documents the conservative V1 target model and P0/P1/P2 catalog
+mappings. It is retained for legacy tests; V2 preparation intentionally lifts
+the V1 "no modifiers" restriction only under the documented three tiers.
+
 ## Environment and documentation evidence
 
 | Topic | Evidence used | What it establishes |

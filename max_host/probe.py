@@ -194,7 +194,15 @@ def _known_context(value: Any) -> str:
         text = str(value).strip().lower()
     except Exception:
         return "unknown"
-    return text if text in {level.value for level in ContextLevel} else "unknown"
+    return text if text in {
+        "object",
+        "vertex",
+        "edge",
+        "border",
+        "polygon",
+        "face",
+        "element",
+    } else "unknown"
 
 
 def _known_phase(value: Any) -> str:
@@ -1044,11 +1052,142 @@ def _details_lines(details: List[Tuple[str, str]]) -> List[str]:
     return lines
 
 
+def _v2_warning_category(value: Any) -> str:
+    """Reduce an overlay warning to one finite, non-path category."""
+
+    if not value:
+        return "none"
+    try:
+        text = str(value).strip().lower()
+    except Exception:
+        return "overlay warning (details withheld)"
+    if text in ("none", "no overlay", "not present"):
+        return "none"
+    if "symlink" in text:
+        return "symlink overlay ignored"
+    if "invalid" in text or "malformed" in text:
+        return "invalid overlay ignored"
+    if "unreadable" in text or "oserror" in text or "utf-8" in text:
+        return "unreadable overlay ignored"
+    if "overlay" in text and "ignore" in text:
+        return "overlay ignored"
+    return "overlay warning (details withheld)"
+
+
+def _v2_sha(value: Any) -> str:
+    if not value:
+        return "unknown"
+    try:
+        text = str(value).strip().lower()
+    except Exception:
+        return "unknown"
+    if re.fullmatch(r"[0-9a-f]{7,64}", text):
+        return text
+    return "unknown"
+
+
+def _v2_state(v2: Any, busy: bool) -> Optional[Dict[str, Any]]:
+    if v2 is None:
+        return None
+    getter = getattr(v2, "diagnostic_state", None)
+    if callable(getter):
+        try:
+            state = getter(observe=not busy)
+        except TypeError:
+            try:
+                state = getter()
+            except Exception:
+                return None
+        except Exception:
+            return None
+        return state if isinstance(state, dict) else None
+    if isinstance(v2, dict):
+        return dict(v2)
+    state = {}
+    for name in (
+        "atlas_schema",
+        "atlas_entries",
+        "overlay_warning",
+        "context",
+        "prep_tier",
+        "blocked_category",
+        "handler_coverage",
+        "idle_mode",
+        "caddy_active",
+        "ambiguous_mode",
+        "rollback_lockout",
+        "loaded_sha",
+    ):
+        if hasattr(v2, name):
+            state[name] = getattr(v2, name)
+    return state or None
+
+
+def _v2_lines(
+    v2: Any, busy: bool, loaded_sha: Any
+) -> List[str]:
+    lines = ["V2 maneuver host (read-only; no preparation or dispatch is started):"]
+    state = _v2_state(v2, busy)
+    if state is None:
+        lines.append("  V2 host: not attached to this report")
+        lines.append("  native operation validation: NOT RUN")
+        return lines
+    schema = state.get("atlas_schema", "unknown")
+    entries = state.get("atlas_entries", "unknown")
+    lines.append("  atlas schema: %s" % _sanitize(schema, 16))
+    lines.append(
+        "  atlas entries: %s"
+        % (entries if isinstance(entries, int) and not isinstance(entries, bool) else "unknown")
+    )
+    lines.append(
+        "  overlay warning: %s"
+        % _v2_warning_category(state.get("overlay_warning"))
+    )
+    context = _known_context(state.get("context"))
+    lines.append("  active context: %s" % context)
+    tier = str(state.get("prep_tier", "blocked")).strip().lower()
+    if tier not in ("ready", "convert", "base_with_modifiers", "blocked"):
+        tier = "blocked"
+    category = _sanitize(state.get("blocked_category", "unavailable"), 48)
+    if not category:
+        category = "unavailable"
+    lines.append("  preparation tier: %s (blocked category: %s)" % (tier, category))
+    coverage = _sanitize(state.get("handler_coverage", "unknown"), 64)
+    lines.append("  fixed handler coverage: %s" % (coverage or "unknown"))
+    lines.append(
+        "  idle EditablePoly mode: %s"
+        % _sanitize(state.get("idle_mode", "unavailable"), 32)
+    )
+    lines.append(
+        "  native caddy active: %s" % bool(state.get("caddy_active", False))
+    )
+    if state.get("ambiguous_mode"):
+        lines.append(
+            "  ambiguous Graphite mode: present (chaining blocked until live validation)"
+        )
+    lines.append(
+        "  rollback lockout: %s (persistent; unload does not clear it)"
+        % ("present" if state.get("rollback_lockout") else "none")
+    )
+    lines.append(
+        "  loaded SHA: %s" % _v2_sha(loaded_sha if loaded_sha is not None else state.get("loaded_sha"))
+    )
+    if busy:
+        lines.append(
+            "  cached state used: a prototype invocation/dialog is busy; no host "
+            "preparation or dispatch was attempted."
+        )
+    lines.append("  native operation validation: NOT RUN")
+    return lines
+
+
 def build_report(
     runtime: Any = None,
     *,
     summary: Any = None,
     include_details: bool = False,
+    v2: Any = None,
+    loaded_sha: Any = None,
 ) -> str:
     """Build read-only diagnostic text without mutating scene or controller state.
 
@@ -1098,6 +1237,9 @@ def build_report(
     lines.extend(member_lines)
     lines.append("")
 
+    lines.extend(_v2_lines(v2, busy, loaded_sha))
+    lines.append("")
+
     lines.extend(
         _steps(
             active_runtime,
@@ -1132,10 +1274,18 @@ def report(
     *,
     summary: Any = None,
     include_details: bool = False,
+    v2: Any = None,
+    loaded_sha: Any = None,
 ) -> str:
     """Print and return :func:`build_report` output."""
 
-    text = build_report(runtime, summary=summary, include_details=include_details)
+    text = build_report(
+        runtime,
+        summary=summary,
+        include_details=include_details,
+        v2=v2,
+        loaded_sha=loaded_sha,
+    )
     print(text)
     return text
 

@@ -16,6 +16,7 @@ from max2025_menu_prototype.max_host.operations import OperationOutcome
 from max2025_menu_prototype.max_host.transactions import (
     MAX_LABEL_LENGTH,
     TransactionError,
+    hold_flags,
     hold_reason,
     hold_state,
     run_undoable,
@@ -361,6 +362,47 @@ class UndoTransactionTests(unittest.TestCase):
         self.assertEqual(outcome.status, "error")
         self.assertFalse(outcome.completed)
         self.assertIn("pymxs.undo", outcome.message)
+
+
+class HoldFlagTests(unittest.TestCase):
+    """V2 keeps the two documented hold flags separate and fails closed."""
+
+    def test_separate_flags_are_returned(self):
+        runtime = types.SimpleNamespace(
+            theHold=types.SimpleNamespace(
+                Holding=lambda: True, RestoreOrRedoing=lambda: False
+            )
+        )
+        self.assertEqual(hold_flags(runtime), (True, False, True))
+        runtime = types.SimpleNamespace(
+            theHold=types.SimpleNamespace(
+                Holding=lambda: 0, RestoreOrRedoing=lambda: 1
+            )
+        )
+        self.assertEqual(hold_flags(runtime), (False, True, True))
+
+    def test_unreadable_flags_fail_closed(self):
+        for runtime in (
+            types.SimpleNamespace(),
+            types.SimpleNamespace(theHold=None),
+            types.SimpleNamespace(theHold=types.SimpleNamespace()),
+            types.SimpleNamespace(
+                theHold=types.SimpleNamespace(
+                    Holding=lambda: "yes", RestoreOrRedoing=lambda: 0
+                )
+            ),
+        ):
+            with self.subTest(runtime=runtime):
+                self.assertEqual(hold_flags(runtime), (False, False, False))
+
+    def test_legacy_hold_state_contract_is_unchanged(self):
+        runtime = types.SimpleNamespace(
+            theHold=types.SimpleNamespace(
+                Holding=lambda: False, RestoreOrRedoing=lambda: False
+            )
+        )
+        self.assertEqual(hold_state(runtime), (True, ""))
+        self.assertEqual(hold_flags(runtime), (False, False, True))
 
 
 if __name__ == "__main__":

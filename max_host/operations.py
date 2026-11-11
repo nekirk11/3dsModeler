@@ -30,10 +30,11 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 
 from ..core.contracts import ContextLevel
 from ..core.parameters import ParameterError, validate_parameters
+from .transactions import TransactionOutcome, hold_reason, run_undoable
 
 MAX_MUTABLE_VERTS = 20_000
 MAX_MUTABLE_FACES = 20_000
@@ -1056,6 +1057,331 @@ _MINIMUM_INDICES = {
 }
 
 
+def _point(value: Any) -> Tuple[float, float, float]:
+    """Coerce a documented Point3/BigPoint value to three floats."""
+
+    if value is None or _is_undefined(value):
+        raise OperationError("A vertex position could not be read.")
+    try:
+        return (float(value.x), float(value.y), float(value.z))
+    except Exception:
+        pass
+    try:
+        items = tuple(value)
+    except Exception:
+        items = ()
+    if len(items) >= 3:
+        try:
+            return (float(items[0]), float(items[1]), float(items[2]))
+        except (TypeError, ValueError):
+            pass
+    try:
+        text = str(value).strip().strip("()")
+        parts = [part for part in text.replace(",", " ").split() if part]
+        if len(parts) >= 3:
+            return (float(parts[0]), float(parts[1]), float(parts[2]))
+    except Exception:
+        pass
+    raise OperationError("A vertex position could not be coerced to three floats.")
+
+
+def _vertex_positions(runtime: Any, node: Any) -> Tuple[Tuple[float, float, float], ...]:
+    polyop = _polyop(runtime)
+    try:
+        count = int(polyop.getNumVerts(node))
+    except Exception as exc:
+        raise OperationError(
+            "Vertex count could not be read (%s)." % type(exc).__name__
+        ) from exc
+    if count < 0:
+        raise OperationError("Vertex count was invalid.")
+    return tuple(_point(polyop.getVert(node, index)) for index in range(1, count + 1))
+
+
+def _edges_using_vert(runtime: Any, node: Any, vertex: int) -> Optional[Tuple[int, ...]]:
+    polyop = _polyop(runtime)
+    try:
+        bitarray = polyop.getEdgesUsingVert(node, int(vertex))
+    except Exception:
+        return None
+    return bitarray_indices(bitarray, runtime)
+
+
+def _edge_other_vertex(
+    runtime: Any, node: Any, edge: int, vertex: int
+) -> Optional[int]:
+    polyop = _polyop(runtime)
+    try:
+        endpoints = _as_ordered_indices(polyop.getEdgeVerts(node, int(edge)))
+    except Exception:
+        return None
+    if endpoints is None or len(endpoints) != 2:
+        return None
+    first, second = endpoints
+    if first == vertex:
+        return second
+    if second == vertex:
+        return first
+    return None
+
+
+def _clear_level_selection(runtime: Any, node: Any, level: str) -> None:
+    polyop = _polyop(runtime)
+    none = _name(runtime, "none")
+    if level == "vertex":
+        polyop.setVertSelection(node, none)
+    else:
+        polyop.setEdgeSelection(node, none)
+
+
+def _set_vertex_selection(runtime: Any, node: Any, indices: Sequence[int]) -> None:
+    polyop = _polyop(runtime)
+    polyop.setVertSelection(node, _native_array(runtime, indices))
+
+
+def _raw_level_for(runtime: Any, level: ContextLevel) -> int:
+    try:
+        value = getattr(runtime, "subObjectLevel")
+        return int(value)
+    except Exception:
+        return {
+            ContextLevel.OBJECT: 0,
+            ContextLevel.VERTEX: 1,
+            ContextLevel.EDGE: 2,
+            ContextLevel.BORDER: 3,
+            ContextLevel.POLYGON: 4,
+            ContextLevel.ELEMENT: 5,
+        }[level]
+
+
+def _collinear_redundant(
+    runtime: Any,
+    node: Any,
+    vertex: int,
+    positions: Sequence[Tuple[float, float, float]],
+    scale: float,
+) -> bool:
+    """True only for a valence-2, nondegenerate, straight inline vertex."""
+
+    edges = _edges_using_vert(runtime, node, vertex)
+    if edges is None or len(edges) != 2:
+        return False
+    if len(set(edges)) != 2:
+        return False
+    others = []
+    for edge in edges:
+        other = _edge_other_vertex(runtime, node, edge, vertex)
+        if other is None or other == vertex:
+            return False
+        if not (1 <= other <= len(positions)):
+            return False
+        others.append(other)
+    if others[0] == others[1]:
+        return False
+    origin = positions[vertex - 1]
+    first = positions[others[0] - 1]
+    second = positions[others[1] - 1]
+    vector_a = tuple(first[i] - origin[i] for i in range(3))
+    vector_b = tuple(second[i] - origin[i] for i in range(3))
+    length_a = sum(component * component for component in vector_a) ** 0.5
+    length_b = sum(component * component for component in vector_b) ** 0.5
+    epsilon = 1e-9 * max(1.0, scale)
+    if length_a <= epsilon or length_b <= epsilon:
+        return False
+    dot = sum(vector_a[i] * vector_b[i] for i in range(3))
+    cosine = dot / (length_a * length_b)
+    return cosine <= -1.0 + 1e-6
+
+
+def clean_dissolve_edges(
+    runtime: Any,
+    node: Any,
+    ep: Any,
+    level: ContextLevel | str,
+    indices: Sequence[int],
+    *,
+    undo_factory: Optional[Callable[[bool, str], Any]] = None,
+    hold_guard: Optional[Callable[[], Optional[str]]] = None,
+) -> TransactionOutcome:
+    """Dissolve selected edges and clean only the proven straight endpoints.
+
+    Both ``EditablePoly.Remove`` passes and the verified selection cleanup share
+    exactly one owned undo chunk.  Vertex-slot identity is proven by comparing
+    the full position prefix before/after edge removal; a renumbering, coincident
+    candidate slots, ambiguous connectivity, or a failed restore rolls the whole
+    edit back instead of using stale indices.  Global weld/isolated-vertex
+    cleanup is never performed.
+    """
+
+    try:
+        context = level if isinstance(level, ContextLevel) else ContextLevel(str(level))
+    except ValueError as exc:
+        return TransactionOutcome(
+            "error", "Unsupported context for clean dissolve.", exception="ValueError"
+        )
+    if context != ContextLevel.EDGE:
+        return TransactionOutcome(
+            "error",
+            "Clean dissolve is defined only for a selected edge context.",
+            exception="UnsupportedContext",
+        )
+    if not callable(getattr(ep, "Remove", None)):
+        return TransactionOutcome(
+            "error",
+            "EditablePoly.Remove is unavailable; no dissolve was attempted.",
+            exception="MissingMember",
+        )
+    try:
+        selected = _require_indices(indices, 1, "edges")
+    except OperationError as exc:
+        return TransactionOutcome("error", str(exc), exception="OperationError")
+
+    def edit() -> OperationOutcome:
+        before_positions = _vertex_positions(runtime, node)
+        before_verts = len(before_positions)
+        polyop = _polyop(runtime)
+        try:
+            before_edges = int(polyop.getNumEdges(node))
+        except Exception as exc:
+            raise OperationError(
+                "Edge count could not be read (%s)." % type(exc).__name__
+            ) from exc
+
+        candidate_verts = _verts_using_edges(runtime, node, selected)
+        if not candidate_verts:
+            raise OperationError(
+                "Selected edges have no readable endpoints; dissolve was not attempted."
+            )
+        rounded: Dict[Tuple[float, float, float], int] = {}
+        for vertex in candidate_verts:
+            if not (1 <= vertex <= before_verts):
+                raise OperationError("A candidate vertex slot is outside the mesh.")
+            key = tuple(round(value, 9) for value in before_positions[vertex - 1])
+            if key in rounded and rounded[key] != vertex:
+                raise OperationError(
+                    "Coincident vertex slots cannot be proven distinct; dissolve "
+                    "was rolled back rather than conflating them."
+                )
+            rounded[key] = vertex
+
+        previous_level = _raw_level_for(runtime, context)
+        scale = max(
+            (abs(component) for point in before_positions for component in point),
+            default=1.0,
+        )
+
+        _require_true(
+            ep.Remove(selLevel=_name(runtime, "Edge"), flag=1),
+            "Remove selected edges",
+        )
+        after_positions = _vertex_positions(runtime, node)
+        after_verts = len(after_positions)
+        try:
+            after_edges = int(polyop.getNumEdges(node))
+        except Exception as exc:
+            raise OperationError(
+                "Edge count could not be re-read (%s)." % type(exc).__name__
+            ) from exc
+        if before_edges - after_edges != len(selected):
+            raise OperationError(
+                "Edge removal did not remove exactly the selected edges; "
+                "topology identity is ambiguous."
+            )
+
+        # Vertex-slot identity guard: every surviving slot must keep its exact
+        # recorded position.  Any shift means the mesh was renumbered.
+        for index in range(min(before_verts, after_verts)):
+            if after_positions[index] != before_positions[index]:
+                raise OperationError(
+                    "Vertex slots were renumbered by edge removal; dissolve was "
+                    "rolled back rather than using stale indices."
+                )
+        if after_verts < before_verts:
+            missing = tuple(range(after_verts + 1, before_verts + 1))
+            for vertex in missing:
+                if vertex not in candidate_verts:
+                    raise OperationError(
+                        "Edge removal deleted a non-candidate vertex; dissolve was "
+                        "rolled back."
+                    )
+
+        cleanup = tuple(
+            sorted(
+                vertex
+                for vertex in candidate_verts
+                if vertex <= after_verts
+                and vertex <= len(after_positions)
+                and _collinear_redundant(
+                    runtime, node, vertex, after_positions, scale
+                )
+            )
+        )
+
+        if cleanup:
+            try:
+                runtime.subObjectLevel = 1
+                if int(runtime.subObjectLevel) != 1:
+                    raise OperationError(
+                        "The temporary vertex context could not be established."
+                    )
+            except OperationError:
+                raise
+            except Exception as exc:
+                raise OperationError(
+                    "The temporary vertex context could not be established (%s)."
+                    % type(exc).__name__
+                ) from exc
+            _set_vertex_selection(runtime, node, cleanup)
+            _require_true(
+                ep.Remove(selLevel=_name(runtime, "Vertex"), flag=1),
+                "Remove redundant inline vertices",
+            )
+            cleaned_positions = _vertex_positions(runtime, node)
+            removed = after_verts - len(cleaned_positions)
+            if removed != len(cleanup):
+                raise OperationError(
+                    "Inline vertex cleanup did not remove exactly the verified "
+                    "candidate set; dissolve was rolled back."
+                )
+
+        # Removed edge/vertex identities are never restored.  Face/element
+        # storage was not touched, and the original raw level is restored.
+        try:
+            _clear_level_selection(runtime, node, "edge")
+            _clear_level_selection(runtime, node, "vertex")
+            runtime.subObjectLevel = previous_level
+            if int(runtime.subObjectLevel) != previous_level:
+                raise OperationError(
+                    "The original sub-object context could not be restored."
+                )
+        except OperationError:
+            raise
+        except Exception as exc:
+            raise OperationError(
+                "Selection/context restoration failed (%s); dissolve was rolled back."
+                % type(exc).__name__
+            ) from exc
+
+        if not cleanup:
+            return OperationOutcome(
+                "applied",
+                "Dissolved %d selected edge(s); no redundant inline vertices "
+                "required cleanup." % len(selected),
+            )
+        return OperationOutcome(
+            "applied",
+            "Dissolved %d selected edge(s) and removed %d verified inline "
+            "vertex/vertices." % (len(selected), len(cleanup)),
+        )
+
+    return run_undoable(
+        "3dsModeler V2: clean dissolve edges",
+        edit,
+        undo_factory,
+        hold_guard=hold_guard or (lambda: hold_reason(runtime)),
+    )
+
+
 def execute_operation(
     runtime: Any,
     node: Any,
@@ -1101,6 +1427,7 @@ __all__ = [
     "OperationOutcome",
     "bitarray_count",
     "bitarray_indices",
+    "clean_dissolve_edges",
     "execute_operation",
     "read_geometry",
     "read_selection_indices",

@@ -42,11 +42,15 @@ if _import_log:
         handle.write("import\\n")
 
 
-def show_tools():
+def show_palette():
     _log = os.environ.get("MAX2025_SHOW_LOG")
     if _log:
         Path(_log).write_text("shown", encoding="utf-8")
     return "shown"
+
+
+def show_tools():
+    return show_palette()
 
 
 def uninstall():
@@ -1289,6 +1293,9 @@ class FakeBootstrap:
         self.shown = 0
         self.uninstalled = 0
 
+    def show_palette(self):
+        self.shown += 1
+
     def show_tools(self):
         self.shown += 1
 
@@ -1867,7 +1874,7 @@ class EmbeddedLauncherTests(unittest.TestCase):
             bridge.deliver()
         self.assertTrue((self.checkout / "tools" / "companion-ran.flag").exists())
         self.assertTrue((self.checkout / "tools" / "companion-start.flag").exists())
-        # The companion owns the authoritative success output after show_tools().
+        # The companion owns the authoritative success output after show_palette().
         self.assertNotIn("Loaded commit", stream.getvalue())
         self.assertNotIn(launcher.LISTENER_TIP, stream.getvalue())
         self.assertEqual(

@@ -1,8 +1,9 @@
 """Qt-independent bootstrap composition tests.
 
-These use fake controllers, panels, popups, and a fake parameter module.  They
-prove ownership, lazy-import, prompt-registration, and teardown ordering only;
-they are not 3ds Max or PySide runtime tests.
+These use fake V2 controllers/palettes plus the legacy V1 panel, popup and
+parameter module.  They prove the V2 launch default, legacy-helper ownership,
+lazy-import, prompt-registration, and teardown ordering only; they are not
+3ds Max or PySide runtime tests.
 """
 
 from __future__ import annotations
@@ -81,6 +82,85 @@ class FakeController:
 
     def release_owned_native_mode(self) -> None:
         self.released += 1
+
+
+class FakeV2Controller:
+    """Minimal implementation of the frozen V2 PaletteController seam."""
+
+    def __init__(self) -> None:
+        self.opened = 0
+        self.disposed = 0
+        self.switches: list = []
+        self.pre_dispatch: list = []
+        self._disposed = False
+        self.view_state = SimpleNamespace(
+            session_id="v2-session",
+            generation=1,
+            status="Ready.",
+            busy=False,
+            rows=(),
+            last_result=None,
+        )
+
+    def open(self):
+        self.opened += 1
+        return self.view_state
+
+    def view(self):
+        return self.view_state
+
+    def set_query(self, text):
+        return self.view_state
+
+    def activate(self, row_id, *, session_id, generation):
+        return self.view_state
+
+    def switch_context(self, context, *, convert_selection=False):
+        self.switches.append((context, convert_selection))
+        return self.view_state
+
+    def cancel(self, reason=""):
+        return self.view_state
+
+    def dispose(self):
+        self.disposed += 1
+        self._disposed = True
+        return self.view_state
+
+    def set_pre_dispatch(self, callback):
+        self.pre_dispatch.append(callback)
+
+    def clear_pre_dispatch(self, callback=None):
+        if callback is None or (self.pre_dispatch and self.pre_dispatch[-1] is callback):
+            if self.pre_dispatch:
+                self.pre_dispatch.pop()
+
+
+class FakePalette:
+    instances: list = []
+
+    def __init__(self, controller, parent=None) -> None:
+        self.controller = controller
+        self.parent = parent
+        self.shows: list = []
+        self.refreshes = 0
+        self.disposed = 0
+        self._open = False
+        self._disposed = False
+        FakePalette.instances.append(self)
+
+    def show_at(self, global_pos=None, *, return_focus=None) -> None:
+        self.shows.append(global_pos)
+        self._open = True
+        return self.controller.open()
+
+    def refresh(self) -> None:
+        self.refreshes += 1
+
+    def dispose(self) -> None:
+        self.disposed += 1
+        self._open = False
+        self._disposed = True
 
 
 class FakePanel:
@@ -200,15 +280,35 @@ class FakeQtGui:
             return "cursor-position"
 
 
+class FakeApplication:
+    @staticmethod
+    def instance():
+        return FakeApplication()
+
+
+class FakeQtWidgets:
+    QApplication = FakeApplication
+
+
+def fake_qt_parts():
+    return (object(), FakeQtGui, FakeQtWidgets)
+
+
 class BootstrapTests(unittest.TestCase):
     def setUp(self) -> None:
         bootstrap.uninstall()
+        bootstrap._palette_host = None
+        bootstrap._controller = None
         FakePanel.instances = []
         FakePopup.instances = []
+        FakePalette.instances = []
         self.parameters = FakeParameters()
         self.parent = object()
         self.patches = [
             mock.patch.object(bootstrap, "_import_panel", lambda: FakePanel),
+            mock.patch.object(bootstrap, "_import_popup", lambda: FakePopup),
+            mock.patch.object(bootstrap, "_import_palette", lambda: FakePalette),
+            mock.patch.object(bootstrap, "_qt_parts", fake_qt_parts),
             mock.patch.object(
                 bootstrap, "_import_parameters", lambda: self.parameters
             ),
@@ -220,12 +320,20 @@ class BootstrapTests(unittest.TestCase):
     def tearDown(self) -> None:
         try:
             bootstrap.uninstall()
+            bootstrap._palette_host = None
+            bootstrap._controller = None
         finally:
             for patch in self.patches:
                 patch.stop()
 
-    def test_show_tools_reuses_one_controller_panel_and_prompt(self) -> None:
-        controller = FakeController()
+    def legacy_panel(self, controller):
+        """Compose the retired V1 panel explicitly for helper-level tests."""
+
+        bootstrap._controller = controller
+        return bootstrap._panel_for(controller)
+
+    def test_show_tools_routes_to_one_v2_palette(self) -> None:
+        controller = FakeV2Controller()
 
         first = bootstrap.show_tools(controller)
         second = bootstrap.show_tools(controller)
@@ -233,15 +341,44 @@ class BootstrapTests(unittest.TestCase):
         self.assertIs(first, second)
         self.assertIs(first.controller, controller)
         self.assertIs(first.parent, self.parent)
+        self.assertEqual(len(FakePalette.instances), 1)
+        self.assertEqual(controller.opened, 2)
+        self.assertIs(bootstrap._palette, first)
+        self.assertEqual(FakePanel.instances, [])
+        self.assertEqual(self.parameters.collected, [])
+
+    def test_show_menu_and_install_launcher_share_the_palette(self) -> None:
+        controller = FakeV2Controller()
+
+        menu = bootstrap.show_menu(controller)
+        launcher = bootstrap.install_launcher(controller)
+
+        self.assertIs(menu, launcher)
+        self.assertIs(bootstrap._launcher, launcher)
+        self.assertEqual(len(FakePalette.instances), 1)
+        self.assertEqual(controller.opened, 2)
+        self.assertEqual(FakePopup.instances, [])
+
+    def test_legacy_panel_composition_reuses_one_controller_and_prompt(self) -> None:
+        controller = FakeController()
+
+        first = self.legacy_panel(controller)
+        bootstrap._ensure_parameter_prompt(controller)
+        second = bootstrap._panel_for(controller)
+        bootstrap._ensure_parameter_prompt(controller)
+
+        self.assertIs(first, second)
+        self.assertIs(first.controller, controller)
+        self.assertIs(first.parent, self.parent)
         self.assertEqual(len(controller.prompts), 1)
-        self.assertEqual(first.show_calls, 2)
-        self.assertEqual(first.raise_calls, 2)
         self.assertIs(bootstrap._controller, controller)
         self.assertIs(bootstrap._panel, first)
 
     def test_refresh_reads_context_only_through_public_controller_api(self) -> None:
         controller = FakeController()
-        panel = bootstrap.show_tools(controller)
+        bootstrap._controller = controller
+        panel = bootstrap._panel_for(controller)
+        panel.refresh()
         self.assertEqual(len(controller.open_calls), 1)
         self.assertEqual(len(controller.events), 1)
         self.assertEqual(controller.events[0].kind, "cancel")
@@ -259,7 +396,7 @@ class BootstrapTests(unittest.TestCase):
 
     def test_prompt_collects_values_and_cancel_returns_none(self) -> None:
         controller = FakeController()
-        bootstrap.show_tools(controller)
+        bootstrap._ensure_parameter_prompt(controller)
         prompt = controller.prompts[0]
         spec = SimpleNamespace(id="model.extrude", label="Extrude")
         context = SimpleNamespace(level=SimpleNamespace(value="polygon"))
@@ -272,39 +409,23 @@ class BootstrapTests(unittest.TestCase):
         self.parameters.result = None
         self.assertIsNone(prompt(spec, context, schema))
 
-    def test_show_menu_shares_controller_and_does_not_reregister_prompt(self) -> None:
+    def test_legacy_popup_composition_keeps_shared_controller(self) -> None:
         controller = FakeController()
-        panel = bootstrap.show_tools(controller)
-        with mock.patch.object(bootstrap, "_import_popup", lambda: FakePopup), \
-                mock.patch.object(
-                    bootstrap,
-                    "_qt_parts",
-                    lambda: (object(), FakeQtGui, object()),
-                ):
-            first = bootstrap.show_menu(controller)
-            second = bootstrap.show_menu(controller)
+        bootstrap._controller = controller
+        first = bootstrap._popup_for(controller)
+        second = bootstrap._popup_for(controller)
+        first.show_at("cursor-position", invocation="latched")
 
         self.assertIs(first, second)
         self.assertEqual(len(FakePopup.instances), 1)
-        self.assertEqual(
-            first.shows,
-            [("cursor-position", "latched"), ("cursor-position", "latched")],
-        )
-        self.assertEqual(len(controller.prompts), 1)
-        self.assertIs(bootstrap._controller, controller)
-        self.assertIs(bootstrap._panel, panel)
-
-    def test_install_launcher_is_click_to_open_alias(self) -> None:
-        controller = FakeController()
-        launcher = bootstrap.install_launcher(controller)
-        self.assertIs(launcher, bootstrap.show_tools(controller))
-        self.assertIs(bootstrap._launcher, launcher)
-        self.assertEqual(len(controller.prompts), 1)
-        self.assertEqual(launcher.show_calls, 2)
+        self.assertEqual(first.shows, [("cursor-position", "latched")])
+        self.assertIs(bootstrap._popup, first)
 
     def test_uninstall_closes_dialog_clears_our_hook_and_is_idempotent(self) -> None:
         controller = FakeController()
-        panel = bootstrap.show_tools(controller)
+        bootstrap._controller = controller
+        panel = bootstrap._panel_for(controller)
+        bootstrap._ensure_parameter_prompt(controller)
         callback = controller.prompts[0]
 
         bootstrap.uninstall()
@@ -320,11 +441,16 @@ class BootstrapTests(unittest.TestCase):
 
     def test_uninstall_during_prompt_invalidates_invocation(self) -> None:
         self.parameters = UninstallingParameters()
-        host = ParameterHost()
-        controller = MenuController(host, default_profile())
+        with mock.patch.object(
+            bootstrap, "_import_parameters", lambda: self.parameters
+        ):
+            host = ParameterHost()
+            controller = MenuController(host, default_profile())
 
-        bootstrap.show_tools(controller)
-        result = controller.invoke("model.extrude")
+            bootstrap._controller = controller
+            bootstrap._panel_for(controller)
+            bootstrap._ensure_parameter_prompt(controller)
+            result = controller.invoke("model.extrude")
 
         self.assertEqual(result.last_result.status, "cancelled")
         self.assertEqual(host.launch_calls, [])
@@ -334,7 +460,9 @@ class BootstrapTests(unittest.TestCase):
 
     def test_uninstall_does_not_release_mode_while_parameters_are_pending(self) -> None:
         controller = FakeController()
-        bootstrap.show_tools(controller)
+        bootstrap._controller = controller
+        bootstrap._panel_for(controller)
+        bootstrap._ensure_parameter_prompt(controller)
         controller.summary_state.busy = True
 
         bootstrap.uninstall()
@@ -342,31 +470,32 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(controller.released, 0)
         self.assertEqual(controller.disposed, 1)
 
-    def test_replacing_controller_disposes_old_panel_and_clears_old_hook(self) -> None:
-        first_controller = FakeController()
-        second_controller = FakeController()
-        first_panel = bootstrap.show_tools(first_controller)
-        old_prompt = first_controller.prompts[0]
-        bootstrap.show_tools(second_controller)
+    def test_replacing_v2_controller_disposes_only_the_old_palette(self) -> None:
+        first_controller = FakeV2Controller()
+        second_controller = FakeV2Controller()
+        first_palette = bootstrap.show_tools(first_controller)
+        second_palette = bootstrap.show_tools(second_controller)
 
-        self.assertEqual(first_panel.disposed, 1)
-        self.assertIn(old_prompt, first_controller.cleared)
-        self.assertEqual(len(second_controller.prompts), 1)
-        self.assertIs(bootstrap._controller, second_controller)
+        self.assertEqual(first_palette.disposed, 1)
+        self.assertEqual(second_palette.disposed, 0)
+        self.assertIs(bootstrap._palette_controller, second_controller)
+        self.assertEqual(first_controller.disposed, 0, "caller-owned controller")
 
-    def test_panel_menu_signal_routes_to_shared_latched_menu(self) -> None:
-        controller = FakeController()
-        panel = bootstrap.show_tools(controller)
-        with mock.patch.object(bootstrap, "_import_popup", lambda: FakePopup), \
-                mock.patch.object(
-                    bootstrap,
-                    "_qt_parts",
-                    lambda: (object(), FakeQtGui, object()),
-                ):
-            panel.menu_requested.emit()
+    def test_injected_v2_controller_is_not_disposed_by_uninstall(self) -> None:
+        controller = FakeV2Controller()
+        palette = bootstrap.show_tools(controller)
 
-        self.assertEqual(len(FakePopup.instances), 1)
-        self.assertEqual(FakePopup.instances[0].shows[0][1], "latched")
+        bootstrap.uninstall()
+
+        self.assertEqual(palette.disposed, 1)
+        self.assertEqual(controller.disposed, 0)
+        self.assertIsNone(bootstrap._palette_controller)
+
+    def test_legacy_controller_is_rejected_by_show_palette(self) -> None:
+        with self.assertRaises(TypeError) as raised:
+            bootstrap.show_palette(FakeController())
+        self.assertIn("V2", str(raised.exception))
+        self.assertEqual(FakePalette.instances, [])
 
     def test_missing_qt_dialog_dependency_is_a_clear_error(self) -> None:
         controller = FakeController()
@@ -376,9 +505,8 @@ class BootstrapTests(unittest.TestCase):
             side_effect=ImportError("typed parameter dialog requires PySide6"),
         ):
             with self.assertRaises(ImportError) as raised:
-                bootstrap.show_tools(controller)
+                bootstrap._ensure_parameter_prompt(controller)
         self.assertIn("PySide6", str(raised.exception))
-        self.assertIsNone(bootstrap._controller)
 
 
 class BootstrapImportTests(unittest.TestCase):
@@ -386,7 +514,7 @@ class BootstrapImportTests(unittest.TestCase):
         script = (
             "import sys\n"
             "import max2025_menu_prototype.max_host.bootstrap as bootstrap\n"
-            "print(callable(bootstrap.show_tools))\n"
+            "print(callable(bootstrap.show_palette))\n"
             "print('PySide6' in sys.modules)\n"
             "print('pymxs' in sys.modules)\n"
         )
@@ -449,9 +577,12 @@ class DiagnosticsTests(unittest.TestCase):
     def setUp(self) -> None:
         bootstrap.uninstall()
         bootstrap._controller = None
+        bootstrap._palette_host = None
 
     def tearDown(self) -> None:
         bootstrap.uninstall()
+        bootstrap._palette_host = None
+        bootstrap._controller = None
 
     def test_reads_existing_summary_without_creating_controller_or_widgets(self) -> None:
         controller = DiagnosticController()
@@ -473,13 +604,16 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertIsNone(kwargs["runtime"])
         self.assertIs(kwargs["summary"], controller.summary_state)
         self.assertFalse(kwargs["include_details"])
+        self.assertIsNone(kwargs["v2"])
 
-    def test_passes_include_details_flag(self) -> None:
+    def test_passes_include_details_flag_and_v2_host(self) -> None:
         controller = DiagnosticController()
         bootstrap._controller = controller
+        bootstrap._palette_host = object()
         with mock.patch.object(probe, "report", return_value="REPORT") as report_call:
             bootstrap.report_diagnostics(include_details=True)
         self.assertTrue(report_call.call_args.kwargs["include_details"])
+        self.assertIs(report_call.call_args.kwargs["v2"], bootstrap._palette_host)
 
     def test_no_controller_reports_unavailable_without_initializing(self) -> None:
         with mock.patch.object(

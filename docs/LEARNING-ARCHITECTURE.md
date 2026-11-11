@@ -21,6 +21,56 @@ Related reading:
   [`plan-FirstMaxTest.md`](plan-FirstMaxTest.md) — the future-work and first-test
   plans owned by another workstream.
 
+## 0. V2 Spotlight path (current native entry)
+
+V2 adds a search-first path beside the frozen V1 controller. The sections below
+document the V1 state machine, panel/popup/dialog, and sandbox; they remain
+accurate for that legacy path and its tests, but a normal V2 launch composes none
+of those widgets.
+
+```text
+core/maneuvers.json + optional checkout-root user_aliases.json
+    -> core/atlas.py        strict JSON load, immutable atlas, overlay merge
+    -> core/search.py       deterministic ranking + context pivots
+    -> core/palette_controller.py   the only ManeuverHost caller
+    -> qt_ui/palette.py     render/input/focus only; never dispatches natively
+                    |
+      core/maneuver_contracts.py:ManeuverHost  (snapshot/availability/execute/switch_context)
+          |                           |
+max_host/adapter.py:          core/maneuver_simulated.py:
+ManeuverHostAdapter           SimulatedManeuverHost
+    -> preparation.py (3 tiers) + maneuver_dispatch.py (fixed handlers)
+    -> bindings.py / operations.py / transactions.py
+```
+
+- **`core/maneuvers.json`** holds exactly 36 stable IDs with label, group,
+  aliases, contexts, and non-executable reference descriptors. Declaration order
+  is the final search tie-breaker. `api`/`doc_url` are display metadata only;
+  nothing in them is interpreted, fetched, or executed. The optional
+  `user_aliases.json` checkout overlay may add aliases/pins/hides but can never
+  change targets, contexts, or behavior, and it is git-ignored and excluded from
+  portable archives.
+- **`ManeuverHostAdapter`** implements the `ManeuverHost` seam over Max. It
+  applies the documented prep tier (convert / preserve stack / block), takes a
+  fresh snapshot, routes by destination selection count to a live native caddy
+  or a zero-selection command mode, and calls one fixed reviewed handler. A
+  caddy/mode result is `launched`, not proof of a geometry edit; the auto-prep
+  conversion is a separate undo record from the interactive caddy. Any Edit_Poly
+  modifier blocks topology editing except the explicitly confirmed *Collapse to
+  Poly*. `core/maneuver_simulated.py` is the deterministic test/sandbox twin.
+- **Persistent MacroScripts.** `tools/max_pull_and_load.ms` delegates to
+  `tools/max_pull_and_load.py`, which writes a managed `3dsModeler.mcr`, loads it
+  into the live session, and exposes the `ThreeDsModeler_Search` and context
+  macros under the `3dsModeler` category in **Customize > Hotkey Editor**.
+  Hotkeys are assigned manually; launch/update only reuses or rewrites owned
+  macros and never removes user assignments. `bootstrap.show_palette()` is the
+  native entry; `show_tools`/`show_menu`/`install_launcher` forward to it.
+  `uninstall()` disposes only in-memory UI/hooks and leaves macros, hotkeys,
+  native modes, scene state, and lockout intact.
+
+All native V2 behavior remains **NOT RUN** in a real Max session; see
+[`TOMORROW-MAX2025.md`](TOMORROW-MAX2025.md) for the live checklist.
+
 ## 1. What lives where
 
 The repository root is the importable package root. There is no nested project
@@ -618,6 +668,8 @@ prove native geometry support.
 | Layer | What it can prove | What it cannot prove |
 | --- | --- | --- |
 | `core/` stdlib tests | State transitions, profile/schema validation, stale-context rejection, repeat semantics, simulated dispatch. | Any Max behavior. |
+| V2 atlas/search/palette-controller tests | 36-ID validation, overlay fallback, deterministic ranking/pivots, single-dispatch and confirmation semantics. | Widget focus in Max, native caddy behavior. |
+| V2 fake-host/preparation/dispatch tests | 3-tier routing, count routing, fixed handler registry, clean-dissolve preconditions, rollback lockout. | Autodesk return types, live caddies/modes, undo grouping. |
 | Fake-runtime `max_host/` tests | Adapter contract, guard order, transaction bookkeeping, rollback branches, fake `pymxs` return handling. | Autodesk return types, real component indices, viewport focus, undo grouping, command-mode behavior. |
 | Optional Qt tests | Widget composition and controller wiring when PySide6 is present. | Max focus, DPI, viewport input, host parenting. |
 | Browser sandbox | One shared controller behind a loopback HTTP renderer. | Native control; every host result is simulated. |
@@ -630,25 +682,29 @@ No amount of source or fake-runtime success promotes it.
 ## 14. Guided read order
 
 1. [`../README.md`](../README.md) — status and delivery.
-2. [`NATIVE-MODELING.md`](NATIVE-MODELING.md) — frozen contracts and acceptance
+2. §0 above, then `core/atlas.py` → `core/search.py` →
+   `core/palette_controller.py` → `max_host/preparation.py` →
+   `max_host/maneuver_dispatch.py` for the current V2 path.
+3. [`NATIVE-MODELING.md`](NATIVE-MODELING.md) — frozen contracts and acceptance
    cases.
-3. `core/contracts.py` — vocabulary and the host protocol.
-4. `core/catalog.py`, then `core/profile.py`, then `core/parameters.py` — what can
+4. `core/contracts.py` — vocabulary and the host protocol.
+5. `core/catalog.py`, then `core/profile.py`, then `core/parameters.py` — what can
    be offered, in what order, with what inputs.
-5. `core/controller.py` — the state machine and the only dispatch path.
-6. `core/simulated.py` — the fake host used by the sandbox.
-7. `max_host/adapter.py` — target inspection, eligibility, and dispatch guard.
-8. `max_host/bindings.py` — the fixed action-to-native mapping.
-9. `max_host/operations.py` — one guarded edit and its postcondition.
-10. `max_host/transactions.py` — one owned undo chunk and the suppressed-exception
+6. `core/controller.py` — the V1 state machine and dispatch path.
+7. `core/simulated.py` — the fake host used by the sandbox.
+8. `max_host/adapter.py` — target inspection, eligibility, and dispatch guard.
+9. `max_host/bindings.py` — the fixed action-to-native mapping.
+10. `max_host/operations.py` — one guarded edit and its postcondition.
+11. `max_host/transactions.py` — one owned undo chunk and the suppressed-exception
     problem.
-11. `max_host/probe.py` — read-only diagnostics.
-12. `max_host/bootstrap.py` — composition, lifetime, and teardown.
-13. `qt_ui/modeling_panel.py`, `qt_ui/parameters.py`, `qt_ui/popup.py` — renderers.
-14. `sandbox/server.py` — the simulation boundary.
-15. [`MAX2025-VALIDATION.md`](MAX2025-VALIDATION.md) and
+12. `max_host/probe.py` — read-only diagnostics.
+13. `max_host/bootstrap.py` — composition, lifetime, and teardown.
+14. `qt_ui/palette.py`, `qt_ui/palette_model.py` — V2 renderer; then
+    `qt_ui/modeling_panel.py`, `qt_ui/parameters.py`, `qt_ui/popup.py` — V1.
+15. `sandbox/server.py` — the simulation boundary.
+16. [`MAX2025-VALIDATION.md`](MAX2025-VALIDATION.md) and
     [`VERIFICATION.md`](VERIFICATION.md) — evidence and NOT RUN status.
-16. [`LEARNING-HOUDINI-TO-3DSMAX.md`](LEARNING-HOUDINI-TO-3DSMAX.md), then the
+17. [`LEARNING-HOUDINI-TO-3DSMAX.md`](LEARNING-HOUDINI-TO-3DSMAX.md), then the
     future-work plans.
 
 ## 15. Where the future polygon tool would attach

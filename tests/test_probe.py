@@ -717,6 +717,73 @@ class ProbeCachedFreshTests(unittest.TestCase):
         self.assertIn("read-only", text)
 
 
+class FakeV2Host:
+    def __init__(self, **state) -> None:
+        self.state = {
+            "atlas_schema": 2,
+            "atlas_entries": 36,
+            "overlay_warning": "none",
+            "context": "edge",
+            "prep_tier": "base_with_modifiers",
+            "blocked_category": "",
+            "handler_coverage": "complete",
+            "idle_mode": "none",
+            "caddy_active": False,
+            "ambiguous_mode": False,
+            "rollback_lockout": False,
+            "loaded_sha": "1" * 40,
+        }
+        self.state.update(state)
+        self.observes = []
+
+    def diagnostic_state(self, *, observe=True):
+        self.observes.append(observe)
+        return dict(self.state)
+
+
+class ProbeV2Tests(unittest.TestCase):
+    def test_v2_section_reports_redacted_state_and_not_run_status(self) -> None:
+        host = FakeV2Host(overlay_warning="invalid overlay ignored", rollback_lockout=True)
+        text = probe.build_report(v2=host, loaded_sha="a" * 40)
+        self.assertIn("V2 maneuver host", text)
+        self.assertIn("atlas schema: 2", text)
+        self.assertIn("atlas entries: 36", text)
+        self.assertIn("overlay warning: invalid overlay ignored", text)
+        self.assertIn("active context: edge", text)
+        self.assertIn("preparation tier: base_with_modifiers", text)
+        self.assertIn("fixed handler coverage: complete", text)
+        self.assertIn("rollback lockout: present", text)
+        self.assertIn("loaded SHA: " + "a" * 40, text)
+        self.assertIn("native operation validation: NOT RUN", text)
+        self.assertNotIn("Poly001", text)
+
+    def test_busy_report_uses_cached_state_without_observing(self) -> None:
+        host = FakeV2Host()
+        summary = _summary(busy=True)
+        text = probe.build_report(summary=summary, v2=host)
+        self.assertEqual(host.observes, [False])
+        self.assertIn("cached state used", text)
+
+    def test_overlay_path_and_bad_sha_never_leak(self) -> None:
+        private_prefix = "/" + "home" + "/"
+        host = FakeV2Host(
+            overlay_warning=private_prefix + "private/user_aliases.json"
+        )
+        text = probe.build_report(
+            v2=host, loaded_sha=private_prefix + "private/checkout"
+        )
+        self.assertNotIn("user_aliases.json", text)
+        self.assertNotIn(private_prefix, text)
+        self.assertNotIn("private", text)
+        self.assertIn("overlay warning (details withheld)", text)
+        self.assertIn("loaded SHA: unknown", text)
+
+    def test_legacy_report_without_v2_stays_readable(self) -> None:
+        text = probe.build_report()
+        self.assertIn("V2 host: not attached", text)
+        self.assertIn("Native operation validation: NOT RUN", text)
+
+
 class ProbeThreadTests(unittest.TestCase):
     def test_worker_thread_fails_before_host_or_summary_access(self) -> None:
         runtime, _node = editable_setup()

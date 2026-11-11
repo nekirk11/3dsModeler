@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import zipfile
 from pathlib import Path
 
@@ -23,6 +24,10 @@ class PortableFixture(unittest.TestCase):
         self._write("README.md", "# Fixture\n")
         self._write("core/__init__.py", "")
         self._write("core/default_profile.json", '{"schema_version": 1}\n')
+        self._write(
+            "core/maneuvers.json",
+            '{"schema_version": 2, "maneuvers": []}\n',
+        )
         self._write("max_host/__init__.py", "")
         self._write("max_host/example.py", "VALUE = 1\n")
         self._write("qt_ui/__init__.py", "")
@@ -68,6 +73,7 @@ class BuildTests(PortableFixture):
         relative = {name.split("/", 1)[1] for name in names}
         self.assertIn("__init__.py", relative)
         self.assertIn("core/default_profile.json", relative)
+        self.assertIn("core/maneuvers.json", relative)
         self.assertIn("sandbox/static/app.js", relative)
         self.assertIn("sandbox/static/index.html", relative)
         self.assertIn("sandbox/static/style.css", relative)
@@ -210,6 +216,7 @@ class ExclusionTests(PortableFixture):
             self.assertNotIn(forbidden, joined)
         for preserved in (
             "core/default_profile.json",
+            "core/maneuvers.json",
             "docs/guide.md",
             "tests/test_example.py",
             "max_host/example.py",
@@ -220,6 +227,72 @@ class ExclusionTests(PortableFixture):
             "sandbox/static/favicon.svg",
         ):
             self.assertIn("max2025_menu_prototype/" + preserved, names)
+
+    def test_user_alias_overlay_is_pruned_without_reading_bytes(self):
+        overlay = self._write(
+            "user_aliases.json",
+            '{"schema_version": 1, "aliases": {"bevel": ["round edge"]}}\n',
+        )
+        opened: list[str] = []
+        real_open = Path.open
+
+        def spy(path, *args, **kwargs):
+            opened.append(path.name)
+            return real_open(path, *args, **kwargs)
+
+        with unittest.mock.patch.object(Path, "open", spy):
+            result = self._build()
+        self.assertTrue(overlay.is_file())
+        self.assertNotIn("user_aliases.json", opened)
+        with zipfile.ZipFile(result.output) as archive:
+            names = archive.namelist()
+        self.assertFalse(
+            any(Path(name).name == "user_aliases.json" for name in names)
+        )
+        manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+        self.assertFalse(
+            any(Path(member["path"]).name == "user_aliases.json"
+                for member in manifest["members"])
+        )
+
+    def test_malformed_overlay_is_pruned(self):
+        self._write("user_aliases.json", "not json at all {[\n")
+        result = self._build()
+        with zipfile.ZipFile(result.output) as archive:
+            names = archive.namelist()
+        self.assertFalse(
+            any(Path(name).name == "user_aliases.json" for name in names)
+        )
+
+    def test_symlinked_overlay_is_pruned_before_symlink_checks(self):
+        target = self.root / "outside-aliases.json"
+        target.write_text('{"schema_version": 1}\n', encoding="utf-8")
+        os.symlink(target, self.source / "user_aliases.json")
+        result = self._build()
+        with zipfile.ZipFile(result.output) as archive:
+            names = archive.namelist()
+        self.assertFalse(
+            any(Path(name).name == "user_aliases.json" for name in names)
+        )
+
+    def test_nested_overlay_name_is_pruned(self):
+        self._write("docs/user_aliases.json", '{"schema_version": 1}\n')
+        result = self._build()
+        with zipfile.ZipFile(result.output) as archive:
+            names = archive.namelist()
+        self.assertFalse(
+            any(Path(name).name == "user_aliases.json" for name in names)
+        )
+
+    def test_overlay_suffix_does_not_widen_the_top_level_allowlist(self):
+        self._write("user_aliases.json.bak", '{"schema_version": 1}\n')
+        with self.assertRaises(portable.PortableError):
+            self._build()
+
+    def test_missing_maneuver_atlas_is_rejected(self):
+        (self.source / "core" / "maneuvers.json").unlink()
+        with self.assertRaises(portable.PortableError):
+            self._build()
 
     def test_unexpected_file_outside_the_allowlist_fails(self):
         self._write("docs/private.txt", "should not be packaged")

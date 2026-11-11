@@ -5,7 +5,8 @@ in the directory.  It copies only Python/JSON/Markdown source files plus the
 four original sandbox static assets and the one standalone MAXScript launcher.
 Git metadata, caches, bytecode, test
 caches, snapshots, raw evidence, logs, screenshots, archives, local outputs,
-editor files, symlinks, and special files never enter the archive.
+editor files, the checkout-local ``user_aliases.json`` overlay, symlinks, and
+special files never enter the archive.
 
 The archive has one top-level directory, ``max2025_menu_prototype/``.  Member
 order, timestamps, and permission bits are fixed so identical source bytes
@@ -68,7 +69,9 @@ ALLOWED_TOP_LEVEL = frozenset(
         "docs",
     }
 )
-REQUIRED_MEMBERS = frozenset({"__init__.py", "README.md", "core/default_profile.json"})
+REQUIRED_MEMBERS = frozenset(
+    {"__init__.py", "README.md", "core/default_profile.json", "core/maneuvers.json"}
+)
 
 _PRUNED_DIR_NAMES = frozenset(
     {
@@ -131,7 +134,10 @@ _PRUNED_FILE_SUFFIXES = frozenset(
         ".ini",
     }
 )
-_PRUNED_FILE_NAMES = frozenset({".DS_Store", "Thumbs.db", "desktop.ini"})
+OVERLAY_FILE_NAME = "user_aliases.json"
+_PRUNED_FILE_NAMES = frozenset(
+    {".DS_Store", "Thumbs.db", "desktop.ini", OVERLAY_FILE_NAME}
+)
 _FIXED_DATE_TIME = (1980, 1, 1, 0, 0, 0)
 _COMPRESS_LEVEL = 9
 
@@ -282,6 +288,10 @@ def collect_members(source: Path | str) -> list[Member]:
                     kept.append(dirname)
                 dirnames[:] = kept
                 for filename in sorted(filenames):
+                    if filename in _PRUNED_FILE_NAMES:
+                        # Exact overlay and editor filenames are pruned before
+                        # lstat/open/hash and even when the entry is a symlink.
+                        continue
                     child = directory / filename
                     relative = PurePosixPath(child.relative_to(root).as_posix())
                     add_file(child, relative)

@@ -27,7 +27,7 @@ import hashlib
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..core.contracts import (
     Availability,
@@ -36,6 +36,7 @@ from ..core.contracts import (
     LaunchResult,
 )
 from ..core.parameters import ParameterError, parameter_schema, validate_parameters
+from . import maneuver_dispatch
 from .bindings import (
     CATALOG_ACTION_IDS,
     NATIVE_BINDINGS,
@@ -54,7 +55,19 @@ from .operations import (
     read_settings,
     target_fingerprint,
 )
-from .transactions import hold_state
+from .preparation import (
+    HOLD_REASON,
+    PreparedTarget,
+    TargetAssessment,
+    collapse_to_poly,
+    context_value,
+    inspect_target,
+    make_context,
+    pivot_open_edges_to_border,
+    prepare_target,
+    switch_prepared_context,
+)
+from .transactions import hold_flags, hold_state
 
 _LEVEL_BY_SUBOBJECT = {
     0: ContextLevel.OBJECT,
@@ -1470,6 +1483,1248 @@ class MaxHostAdapter:
         return self._exit_owned_mode(runtime, token, inspection)
 
 
+def _field(value: Any, name: str, default: Any = None) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _iter_maneuvers(atlas: Any) -> List[Any]:
+    if atlas is None:
+        return []
+    source = atlas
+    if isinstance(source, Mapping):
+        for key in ("maneuvers", "by_id", "_maneuvers", "specs"):
+            if key in source:
+                source = source[key]
+                break
+        if isinstance(source, Mapping):
+            return list(source.values())
+    else:
+        for attribute in ("maneuvers", "by_id", "_maneuvers", "specs"):
+            value = getattr(source, attribute, None)
+            if value is not None:
+                source = value
+                break
+        if isinstance(source, Mapping):
+            return list(source.values())
+    try:
+        return list(source)
+    except TypeError:
+        return []
+
+
+def _maneuver_id(spec: Any) -> Optional[str]:
+    value = _field(spec, "id")
+    return value if isinstance(value, str) else None
+
+
+def _context_map(spec: Any) -> Dict[str, Any]:
+    contexts = _field(spec, "contexts", {})
+    if not isinstance(contexts, Mapping):
+        return {}
+    normalized: Dict[str, Any] = {}
+    for key, value in contexts.items():
+        try:
+            normalized[context_value(key)] = value
+        except ValueError:
+            continue
+    return normalized
+
+
+def _descriptor_for(spec: Any, context: str, selected: bool) -> Any:
+    route_for = getattr(spec, "route_for", None)
+    if callable(route_for):
+        try:
+            return route_for(make_context(context), bool(selected))
+        except Exception:
+            pass
+    context_value_map = _context_map(spec)
+    context_entry = context_value_map.get(context)
+    if context_entry is None:
+        return None
+    max2025 = _field(context_entry, "max2025")
+    if max2025 is None:
+        return None
+    return _field(max2025, "with_selection" if selected else "empty_selection")
+
+
+def _safe_text(value: Any, fallback: str) -> str:
+    try:
+        return str(value)
+    except Exception:
+        return fallback
+
+
+def _mode_text(value: Any) -> str:
+    if value is None:
+        return "none"
+    try:
+        text = str(value).strip().lower()
+    except Exception:
+        return "unknown"
+    text = text.lstrip("#").strip("\"'")
+    return text or "none"
+
+
+def _prep_members(assessment: TargetAssessment) -> Tuple[Tuple[str, str], ...]:
+    if assessment.tier == "convert":
+        return (
+            ("runtime", "convertTo"),
+            ("runtime", "canConvertTo"),
+            ("runtime", "Editable_Poly"),
+        )
+    if assessment.tier in ("ready", "base_with_modifiers"):
+        members: List[Tuple[str, str]] = [
+            ("runtime", "setCommandPanelTaskMode"),
+            ("runtime", "modPanel"),
+            ("runtime", "subObjectLevel"),
+        ]
+        if assessment.ep is None:
+            members.append(("node", "EditablePoly"))
+        if assessment.tier == "base_with_modifiers":
+            members.append(("showEndResult", "showEndResult"))
+        return tuple(members)
+    return ()
+
+
+def _hold_guard(runtime: Any) -> Optional[str]:
+    holding, restoring, readable = hold_flags(runtime)
+    if not readable:
+        return (
+            "Undo/redo state could not be verified; no native action was "
+            "launched."
+        )
+    if holding or restoring:
+        return HOLD_REASON
+    return None
+
+
+class ManeuverHostAdapter:
+    """V2 ``ManeuverHost`` implementation beside the unchanged legacy adapter.
+
+    The atlas is injected and authoritative for IDs, contexts and descriptors;
+    this class re-resolves every request internally and never trusts renderer
+    input.  Only fixed handlers from :mod:`max_host.maneuver_dispatch` run.
+    """
+
+    def __init__(
+        self,
+        runtime: Any = None,
+        undo_factory: Any = None,
+        atlas: Any = None,
+        *,
+        overlay_warning: str = "",
+        loaded_sha: str = "",
+    ) -> None:
+        self._runtime = runtime
+        self._injected_runtime = runtime is not None
+        self._undo_factory = undo_factory
+        self._atlas = atlas
+        self._overlay_warning = overlay_warning
+        self._loaded_sha = loaded_sha
+        self._spec_index: Optional[Dict[str, Any]] = None
+        self._topology_disabled_reason: Optional[str] = None
+        self._ambiguous_mode = False
+        self._caddy_active = False
+        self._last_snapshot: Any = None
+        self._last_assessment: Optional[TargetAssessment] = None
+        self._last_maneuver_snapshot: Any = None
+        contract = maneuver_dispatch.contract_parity()
+        missing = maneuver_dispatch.missing_handlers()
+        self._registry_issues = tuple(contract) + tuple(
+            "no handler for %s/%s" % pair for pair in missing
+        )
+
+    # -- runtime and atlas -------------------------------------------------
+
+    def _assert_main_thread(self) -> None:
+        if self._injected_runtime:
+            return
+        if threading.current_thread() is not threading.main_thread():
+            raise RuntimeError(
+                "pymxs.runtime must be used on the 3ds Max main thread; worker "
+                "threads are not supported."
+            )
+
+    def _resolve_runtime(self) -> Any:
+        self._assert_main_thread()
+        if self._runtime is not None:
+            return self._runtime
+        try:
+            from pymxs import runtime as max_runtime  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise RuntimeError(
+                "pymxs.runtime is unavailable. Create ManeuverHostAdapter with "
+                "an injected runtime, or run it inside 3ds Max 2025."
+            ) from exc
+        self._runtime = max_runtime
+        return max_runtime
+
+    def _specs(self) -> Dict[str, Any]:
+        if self._spec_index is None:
+            index: Dict[str, Any] = {}
+            for spec in _iter_maneuvers(self._atlas):
+                maneuver_id = _maneuver_id(spec)
+                if maneuver_id is not None and maneuver_id not in index:
+                    index[maneuver_id] = spec
+            self._spec_index = index
+        return self._spec_index
+
+    def _spec(self, maneuver_id: Any) -> Any:
+        if not isinstance(maneuver_id, str):
+            return None
+        return self._specs().get(maneuver_id)
+
+    def atlas_entry_count(self) -> int:
+        return len(self._specs())
+
+    def atlas_schema_version(self) -> Any:
+        value = _field(self._atlas, "schema_version", "unknown")
+        if isinstance(value, bool) or not isinstance(value, int):
+            return "unknown"
+        return value
+
+    def registry_issues(self) -> Tuple[str, ...]:
+        return self._registry_issues
+
+    # -- snapshot ----------------------------------------------------------
+
+    def _build_snapshot(self, runtime: Any, assessment: TargetAssessment) -> Any:
+        node = assessment.node
+        base = assessment.base
+        transform = _safe_text(getattr(node, "transform", "unreadable"), "unreadable") if node is not None else "none"
+        current_time = _safe_text(getattr(runtime, "currentTime", "unreadable"), "unreadable")
+        tool_mode = "none"
+        try:
+            tool_mode = _mode_text(getattr(runtime.toolMode, "commandMode", None))
+        except Exception:
+            tool_mode = "unknown"
+        ep_mode = "none"
+        if assessment.ep is not None:
+            ep_mode, _readable = maneuver_dispatch.read_ep_mode(runtime, assessment.ep)
+        mode_token = _digest(
+            "mode", tool_mode, ep_mode, self._ambiguous_mode, assessment.raw_level
+        )
+        geometry_part = (
+            (assessment.geometry.counts, assessment.geometry.digest)
+            if assessment.geometry is not None
+            else ("no-geometry", assessment.geometry_reason)
+        )
+        revision = int(
+            _digest(
+                "v2-revision",
+                assessment.target_token,
+                assessment.stack,
+                assessment.context,
+                assessment.raw_level,
+                assessment.selection_token,
+                assessment.settings_token,
+                geometry_part,
+                transform,
+                current_time,
+                assessment.task_mode,
+                assessment.task_mode_known,
+                assessment.panel_ready,
+                tool_mode,
+                ep_mode,
+                assessment.holding,
+                assessment.restore_or_redoing,
+            )[:16],
+            16,
+        )
+        safety = _digest(
+            "v2-safety",
+            revision,
+            assessment.target_token,
+            assessment.selection_token,
+            mode_token,
+            self._topology_disabled_reason,
+            self._ambiguous_mode,
+            self._caddy_active,
+        )
+        return make_snapshot(
+            context=assessment.context,
+            target_kind=assessment.target_kind,
+            target_token=assessment.target_token,
+            selection_count=max(0, assessment.selection_count),
+            selection_token=assessment.selection_token,
+            revision=revision,
+            prep_tier=assessment.tier,
+            blocked_reason=assessment.reason,
+            hold_active=bool(assessment.holding or not assessment.hold_ok),
+            restore_or_redoing=bool(assessment.restore_or_redoing),
+            mode_token=mode_token,
+            caddy_active=self._caddy_active,
+            safety_token=safety,
+        )
+
+    def snapshot(self) -> Any:
+        """Read a read-only V2 snapshot with opaque identity tokens."""
+
+        runtime = self._resolve_runtime()
+        self._assert_main_thread()
+        assessment = inspect_target(runtime)
+        snapshot = self._build_snapshot(runtime, assessment)
+        self._last_assessment = assessment
+        self._last_snapshot = snapshot
+        return snapshot
+
+    # -- availability ------------------------------------------------------
+
+    def _assessment_for(self, snapshot: Any) -> Optional[TargetAssessment]:
+        if (
+            self._last_snapshot is not None
+            and self._last_assessment is not None
+            and _snapshot_identity_matches(self._last_snapshot, snapshot)
+        ):
+            return self._last_assessment
+        runtime = self._runtime
+        if runtime is None:
+            return self._last_assessment
+        try:
+            return inspect_target(runtime)
+        except Exception:
+            return None
+
+    def availability(
+        self, maneuver_id: str, snapshot: Any, *, pivot_context: Any = None
+    ) -> Availability:
+        """Predict required preparation/pivot without opening a native tool."""
+
+        if self._registry_issues:
+            return Availability(
+                False,
+                "V2 descriptor registry is unavailable: %s" % self._registry_issues[0],
+            )
+        spec = self._spec(maneuver_id)
+        if spec is None:
+            return Availability(False, "Unknown maneuver.")
+        try:
+            current = context_value(getattr(snapshot, "context", None))
+        except ValueError:
+            return Availability(False, "The active context is invalid.")
+        supported = set(_context_map(spec))
+        context = current if current in supported else None
+        if context is None and pivot_context is not None:
+            try:
+                candidate = context_value(pivot_context)
+            except ValueError:
+                candidate = None
+            if candidate in supported:
+                context = candidate
+        if context is None:
+            if supported:
+                return Availability(
+                    False,
+                    "Available in the %s context."
+                    % ", ".join(name for name in ("object", "vertex", "edge", "border", "face", "element") if name in supported),
+                )
+            return Availability(False, "Not available in any V2 context.")
+
+        selected = int(getattr(snapshot, "selection_count", 0) or 0) > 0
+        descriptor = _descriptor_for(spec, context, selected)
+        if descriptor is None:
+            if not selected:
+                noun = {
+                    "object": "objects",
+                    "vertex": "vertices",
+                    "edge": "edges",
+                    "border": "border edges",
+                    "face": "faces",
+                    "element": "elements",
+                }.get(context, "components")
+                return Availability(False, "Select %s first." % noun)
+            return Availability(
+                False, "Not available for the %s context." % context
+            )
+
+        kind = _field(descriptor, "kind")
+        target = _field(descriptor, "target")
+        if not isinstance(kind, str) or not isinstance(target, str):
+            return Availability(False, "The maneuver descriptor is invalid.")
+        if not maneuver_dispatch.is_allowed(kind, target):
+            return Availability(
+                False,
+                "The maneuver target is not in the frozen registry.",
+            )
+        try:
+            destination = target if kind == "context_switch" else context
+            destination = context_value(destination)
+        except ValueError:
+            return Availability(False, "The maneuver destination is invalid.")
+        spec_handler = maneuver_dispatch.handler_for(kind, target)
+        if spec_handler is None:
+            return Availability(False, "No reviewed handler exists for this route.")
+        if spec_handler.gated_reason:
+            return Availability(False, spec_handler.gated_reason)
+        if self._ambiguous_mode and kind != "max_command":
+            return Availability(
+                False,
+                "The previous Graphite SwiftLoop mode cannot be exited safely; "
+                "live 2025 validation is required before chaining.",
+            )
+        if self._caddy_active:
+            return Availability(
+                False,
+                "A native caddy is still open; it must be completed or cancelled "
+                "natively before another maneuver.",
+            )
+        if getattr(snapshot, "hold_active", False) or getattr(
+            snapshot, "restore_or_redoing", False
+        ):
+            return Availability(
+                False, "An active hold/restore/redo state blocks native dispatch."
+            )
+
+        assessment = self._assessment_for(snapshot)
+        if assessment is None:
+            return Availability(
+                False, "The host target could not be inspected read-only."
+            )
+        needs_prep = context != "object" or kind == "context_switch"
+        if kind == "composite" and target in ("convert_to_poly", "collapse_to_poly"):
+            if context != "object":
+                return Availability(
+                    False, "This action is only available at object level."
+                )
+            if target == "convert_to_poly":
+                if assessment.tier == "blocked":
+                    return Availability(False, assessment.reason)
+                if assessment.tier not in ("ready", "convert"):
+                    return Availability(False, assessment.reason or "Target is not convertible.")
+            else:
+                if assessment.node is None:
+                    return Availability(False, "Select one object to collapse.")
+                if assessment.instanced:
+                    return Availability(False, assessment.reason)
+                if assessment.tier == "blocked" and assessment.category in (
+                    "hold",
+                    "unreadable state",
+                ):
+                    return Availability(False, assessment.reason)
+            needs_prep = False
+        elif kind == "max_command" and context == "object":
+            needs_prep = False
+        if needs_prep:
+            if assessment.tier == "blocked":
+                return Availability(False, assessment.reason)
+            if assessment.tier == "convert":
+                for owner, member in _prep_members(assessment):
+                    if not _has_member(self._runtime, owner, member, assessment):
+                        return Availability(
+                            False,
+                            "Required native member %s.%s is unavailable."
+                            % (owner, member),
+                        )
+            if assessment.tier == "base_with_modifiers" and assessment.show_end_result is None:
+                return Availability(
+                    False,
+                    "showEndResult could not be read; the base cannot be presented "
+                    "safely.",
+                )
+
+        if self._topology_disabled_reason and kind in (
+            "caddy",
+            "command_mode",
+            "button_op",
+            "composite",
+        ):
+            return Availability(False, self._topology_disabled_reason)
+
+        runtime = self._runtime
+        for owner, member in spec_handler.members:
+            if not _has_member(runtime, owner, member, assessment):
+                return Availability(
+                    False,
+                    "Required native member %s.%s is unavailable." % (owner, member),
+                )
+
+        if (
+            maneuver_id == "fill"
+            and context == "border"
+            and current == "edge"
+            and assessment.context == "edge"
+        ):
+            open_edges = _read_open_edges(runtime, assessment)
+            if open_edges is None:
+                return Availability(
+                    False, "Open edges could not be read; fill is blocked."
+                )
+            if not set(assessment.indices or ()) & set(open_edges):
+                return Availability(
+                    False, "Select open edges to fill; closed edges are not capped."
+                )
+        return Availability(True, "")
+
+    # -- execute -----------------------------------------------------------
+
+    def execute(self, request: Any) -> LaunchResult:
+        """Revalidate, prepare, pivot and dispatch exactly one fixed handler."""
+
+        maneuver_id = _field(request, "maneuver_id")
+        if not isinstance(maneuver_id, str):
+            return LaunchResult(
+                status="blocked",
+                action_id=str(maneuver_id),
+                message="A maneuver ID is required.",
+            )
+        if self._registry_issues:
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message="V2 descriptor registry is unavailable: %s"
+                % self._registry_issues[0],
+            )
+        spec = self._spec(maneuver_id)
+        if spec is None:
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message="The maneuver is not part of the validated atlas.",
+            )
+        try:
+            runtime = self._resolve_runtime()
+            self._assert_main_thread()
+        except Exception as exc:
+            return LaunchResult(
+                status="error", action_id=maneuver_id, message=str(exc)
+            )
+
+        expected = _field(request, "expected_snapshot")
+        try:
+            fresh = self.snapshot()
+        except Exception as exc:
+            return LaunchResult(
+                status="error",
+                action_id=maneuver_id,
+                message="Host snapshot failed (%s): %s"
+                % (type(exc).__name__, exc),
+            )
+        mismatch = _snapshot_mismatch(expected, fresh)
+        if mismatch:
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message="%s; reopen the palette." % mismatch,
+            )
+        assessment = self._last_assessment
+        if assessment is None:
+            return LaunchResult(
+                status="error",
+                action_id=maneuver_id,
+                message="The target assessment was not retained.",
+            )
+        if self._topology_disabled_reason:
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message=self._topology_disabled_reason,
+            )
+        hold_reason = _hold_guard(runtime)
+        if hold_reason:
+            return LaunchResult(
+                status="blocked", action_id=maneuver_id, message=hold_reason
+            )
+
+        try:
+            starting = context_value(getattr(fresh, "context", None))
+        except ValueError:
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message="The active context is invalid.",
+            )
+        supported = set(_context_map(spec))
+        route_context = starting if starting in supported else None
+        if route_context is None:
+            pivot = _field(request, "pivot_context")
+            if pivot is not None:
+                try:
+                    candidate = context_value(pivot)
+                except ValueError:
+                    candidate = None
+                if candidate in supported:
+                    route_context = candidate
+        if route_context is None:
+            if supported:
+                return LaunchResult(
+                    status="blocked",
+                    action_id=maneuver_id,
+                    message="This maneuver is not available in the %s context."
+                    % starting,
+                )
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message="The maneuver is not available in any V2 context.",
+            )
+
+        selected = int(getattr(fresh, "selection_count", 0) or 0) > 0
+        candidate_descriptors = [
+            _descriptor_for(spec, route_context, True),
+            _descriptor_for(spec, route_context, False),
+        ]
+        for descriptor in candidate_descriptors:
+            if descriptor is None:
+                continue
+            kind = _field(descriptor, "kind")
+            target = _field(descriptor, "target")
+            if not isinstance(kind, str) or not isinstance(target, str):
+                return LaunchResult(
+                    status="blocked",
+                    action_id=maneuver_id,
+                    message="The maneuver descriptor is invalid.",
+                )
+            if not maneuver_dispatch.is_allowed(kind, target):
+                return LaunchResult(
+                    status="blocked",
+                    action_id=maneuver_id,
+                    message="The maneuver target is not in the frozen registry.",
+                )
+            spec_handler = maneuver_dispatch.handler_for(kind, target)
+            if spec_handler is None:
+                return LaunchResult(
+                    status="blocked",
+                    action_id=maneuver_id,
+                    message="No reviewed handler exists for this route.",
+                )
+            if spec_handler.gated_reason:
+                return LaunchResult(
+                    status="blocked",
+                    action_id=maneuver_id,
+                    message=spec_handler.gated_reason,
+                )
+            for owner, member in spec_handler.members:
+                if not _has_member(runtime, owner, member, assessment):
+                    return LaunchResult(
+                        status="blocked",
+                        action_id=maneuver_id,
+                        message="Required native member %s.%s is unavailable."
+                        % (owner, member),
+                    )
+        if all(descriptor is None for descriptor in candidate_descriptors):
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message="No %s-selection route exists in the %s context."
+                % ("with" if selected else "empty", route_context),
+            )
+
+        routed_kind = None
+        routed_target = None
+        for descriptor in candidate_descriptors:
+            if descriptor is not None:
+                routed_kind = _field(descriptor, "kind")
+                routed_target = _field(descriptor, "target")
+                break
+        try:
+            destination = context_value(
+                routed_target if routed_kind == "context_switch" else route_context
+            )
+        except ValueError:
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message="The maneuver destination context is invalid.",
+            )
+
+        if self._ambiguous_mode and destination != starting:
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message=(
+                    "The previous Graphite SwiftLoop mode cannot be exited safely; "
+                    "live 2025 validation is required before chaining."
+                ),
+            )
+
+        if assessment.ep is not None:
+            ok, reason = maneuver_dispatch.exit_idle_editable_poly_mode(
+                runtime, assessment.ep
+            )
+            if not ok:
+                return LaunchResult(
+                    status="blocked", action_id=maneuver_id, message=reason
+                )
+
+        needs_prep = destination != "object" or routed_kind == "context_switch"
+        prepared: Optional[PreparedTarget] = None
+        if routed_kind == "composite" and routed_target == "collapse_to_poly":
+            prepared = collapse_to_poly(
+                runtime,
+                assessment,
+                confirmed=bool(_field(request, "confirmed", False)),
+                undo_factory=self._undo_factory,
+            )
+        elif routed_kind == "composite" and routed_target == "convert_to_poly":
+            if assessment.tier in ("ready",):
+                prepared = _passive_prepared(assessment)
+            else:
+                prepared = prepare_target(
+                    runtime,
+                    assessment,
+                    undo_factory=self._undo_factory,
+                )
+        elif needs_prep:
+            preflight = self._preflight_preparation(runtime, assessment)
+            if preflight:
+                return LaunchResult(
+                    status="blocked", action_id=maneuver_id, message=preflight
+                )
+            prepared = prepare_target(
+                runtime,
+                assessment,
+                undo_factory=self._undo_factory,
+            )
+        else:
+            prepared = _passive_prepared(assessment)
+
+        if prepared is None or not prepared.ok:
+            return LaunchResult(
+                status=(
+                    "error"
+                    if prepared is not None and prepared.status == "error"
+                    else "blocked"
+                ),
+                action_id=maneuver_id,
+                message=getattr(prepared, "reason", "") or "Target preparation failed.",
+            )
+        if prepared.node_token != assessment.node_token:
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message="The selected node changed during preparation; nothing was launched.",
+            )
+        if not prepared.converted and not prepared.collapsed:
+            if (
+                assessment.base_token is not None
+                and prepared.base_token != assessment.base_token
+            ):
+                return LaunchResult(
+                    status="blocked",
+                    action_id=maneuver_id,
+                    message="The target base object changed unexpectedly during preparation.",
+                )
+        if prepared.status == "noop":
+            return LaunchResult(
+                status="noop",
+                action_id=maneuver_id,
+                message=prepared.reason or "No preparation or edit was required.",
+            )
+
+        # Pivot/context conversion.
+        pivot = _field(request, "pivot_context")
+        if (
+            maneuver_id == "fill"
+            and prepared.context == "edge"
+            and destination == "border"
+            and pivot is not None
+            and context_value(pivot) == "border"
+        ):
+            pivot_outcome = pivot_open_edges_to_border(runtime, prepared)
+            if not pivot_outcome.ok:
+                return LaunchResult(
+                    status=(
+                        "blocked"
+                        if pivot_outcome.status == "blocked"
+                        else "error"
+                    ),
+                    action_id=maneuver_id,
+                    message=pivot_outcome.reason,
+                )
+            prepared = _prepared_after_switch(prepared, pivot_outcome)
+        elif destination != prepared.context and routed_kind != "context_switch":
+            conversion = bool(_field(request, "convert_selection", False)) or (
+                routed_kind == "context_switch"
+            )
+            switch = switch_prepared_context(
+                runtime,
+                prepared,
+                destination,
+                convert_selection=conversion,
+                hold_guard=lambda: _hold_guard(runtime),
+            )
+            if not switch.ok:
+                return LaunchResult(
+                    status=(
+                        "blocked" if switch.status == "blocked" else "error"
+                    ),
+                    action_id=maneuver_id,
+                    message=switch.reason,
+                )
+            prepared = _prepared_after_switch(prepared, switch)
+
+        # Fresh destination snapshot: count routing happens now.
+        try:
+            destination_snapshot = self.snapshot()
+        except Exception as exc:
+            return LaunchResult(
+                status="error",
+                action_id=maneuver_id,
+                message="Post-preparation snapshot failed (%s): %s"
+                % (type(exc).__name__, exc),
+            )
+        destination_assessment = self._last_assessment
+        if (
+            destination_assessment is None
+            or destination_assessment.node_token != assessment.node_token
+        ):
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message="The editing target changed during preparation; nothing was launched.",
+            )
+        try:
+            actual_context = context_value(destination_snapshot.context)
+        except ValueError:
+            actual_context = ""
+        if routed_kind != "context_switch" and actual_context != destination:
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message="The destination context could not be established.",
+            )
+        destination_selected = (
+            int(getattr(destination_snapshot, "selection_count", 0) or 0) > 0
+        )
+        descriptor = _descriptor_for(spec, route_context, destination_selected)
+        if descriptor is None:
+            if not destination_selected:
+                noun = {
+                    "object": "objects",
+                    "vertex": "vertices",
+                    "edge": "edges",
+                    "border": "border edges",
+                    "face": "faces",
+                    "element": "elements",
+                }.get(destination, "components")
+                return LaunchResult(
+                    status="blocked",
+                    action_id=maneuver_id,
+                    message="Select %s first." % noun,
+                )
+            return LaunchResult(
+                status="blocked",
+                action_id=maneuver_id,
+                message="Not available for the %s context." % destination,
+            )
+
+        hold_reason = _hold_guard(runtime)
+        if hold_reason:
+            return LaunchResult(
+                status="blocked", action_id=maneuver_id, message=hold_reason
+            )
+        self._last_maneuver_snapshot = destination_snapshot
+        pre_dispatch_safety = getattr(destination_snapshot, "safety_token", "")
+
+        try:
+            outcome = maneuver_dispatch.dispatch(
+                runtime,
+                descriptor,
+                prepared,
+                destination,
+                undo_factory=self._undo_factory,
+                hold_guard=lambda: _hold_guard(runtime),
+                confirmed=bool(_field(request, "confirmed", False)),
+            )
+        except Exception as exc:
+            outcome = maneuver_dispatch.DispatchOutcome(
+                "error",
+                "Native dispatch raised %s: %s" % (type(exc).__name__, exc),
+            )
+
+        if outcome.ambiguous_mode:
+            self._ambiguous_mode = True
+        if outcome.status == "error":
+            return self._after_error(
+                maneuver_id, runtime, pre_dispatch_safety, outcome.message
+            )
+        if outcome.status == "applied":
+            self._refresh_presentation(runtime)
+        return LaunchResult(
+            status=outcome.status,
+            action_id=maneuver_id,
+            message=outcome.message,
+        )
+
+    def _preflight_preparation(
+        self, runtime: Any, assessment: TargetAssessment
+    ) -> str:
+        if assessment.tier == "blocked":
+            return assessment.reason
+        if assessment.tier == "base_with_modifiers" and assessment.show_end_result is None:
+            return (
+                "showEndResult could not be read; editing beneath the stack is "
+                "blocked."
+            )
+        for owner, member in _prep_members(assessment):
+            if not _has_member(runtime, owner, member, assessment):
+                return "Required native member %s.%s is unavailable." % (owner, member)
+        return ""
+
+    def _after_error(
+        self,
+        maneuver_id: str,
+        runtime: Any,
+        pre_dispatch_safety: str,
+        message: str,
+    ) -> LaunchResult:
+        try:
+            assessment = inspect_target(runtime)
+            after = self._build_snapshot(runtime, assessment)
+            observed = getattr(after, "safety_token", "")
+        except Exception:
+            observed = ""
+        if observed and observed == pre_dispatch_safety:
+            return LaunchResult(
+                status="error",
+                action_id=maneuver_id,
+                message=message
+                + " The owned undo chunk restored the pre-dispatch state.",
+            )
+        self._topology_disabled_reason = (
+            "An edit failed and rollback could not be verified; native V2 topology "
+            "is latched disabled until Max is restarted. Inspect the scene and use "
+            "Max Undo manually; do not retry blindly."
+        )
+        return LaunchResult(
+            status="error",
+            action_id=maneuver_id,
+            message=message + " " + self._topology_disabled_reason,
+        )
+
+    def _refresh_presentation(self, runtime: Any) -> None:
+        for name in ("redrawViews", "completeRedraw"):
+            function = getattr(runtime, name, None)
+            if callable(function):
+                try:
+                    function()
+                except Exception:
+                    pass
+                return
+
+    # -- context switch ----------------------------------------------------
+
+    def switch_context(
+        self,
+        context: Any,
+        *,
+        expected_snapshot: Any,
+        convert_selection: bool = False,
+    ) -> LaunchResult:
+        """Switch the public V2 context through the same preparation guards."""
+
+        action_id = "context.%s" % (
+            context.value if hasattr(context, "value") else context
+        )
+        try:
+            destination = context_value(context)
+        except ValueError as exc:
+            return LaunchResult(
+                status="blocked", action_id=action_id, message=str(exc)
+            )
+        try:
+            runtime = self._resolve_runtime()
+            self._assert_main_thread()
+            fresh = self.snapshot()
+        except Exception as exc:
+            return LaunchResult(
+                status="error", action_id=action_id, message=str(exc)
+            )
+        mismatch = _snapshot_mismatch(expected_snapshot, fresh)
+        if mismatch:
+            return LaunchResult(
+                status="blocked",
+                action_id=action_id,
+                message="%s; reopen the palette." % mismatch,
+            )
+        if self._topology_disabled_reason:
+            return LaunchResult(
+                status="blocked",
+                action_id=action_id,
+                message=self._topology_disabled_reason,
+            )
+        hold_reason = _hold_guard(runtime)
+        if hold_reason:
+            return LaunchResult(
+                status="blocked", action_id=action_id, message=hold_reason
+            )
+
+        if destination == "object" and not convert_selection:
+            try:
+                runtime.subObjectLevel = 0
+                if int(runtime.subObjectLevel) != 0:
+                    raise RuntimeError("subObjectLevel readback did not report 0")
+            except Exception as exc:
+                return LaunchResult(
+                    status="error",
+                    action_id=action_id,
+                    message="The object context could not be entered (%s)."
+                    % type(exc).__name__,
+                )
+            return LaunchResult(
+                status="launched",
+                action_id=action_id,
+                message="Entered the object context; the existing selection was preserved.",
+            )
+
+        assessment = self._last_assessment
+        if assessment is None:
+            return LaunchResult(
+                status="error",
+                action_id=action_id,
+                message="The target assessment was not retained.",
+            )
+        if assessment.ep is not None:
+            ok, reason = maneuver_dispatch.exit_idle_editable_poly_mode(
+                runtime, assessment.ep
+            )
+            if not ok:
+                return LaunchResult(
+                    status="blocked", action_id=action_id, message=reason
+                )
+        prepared = prepare_target(runtime, assessment, undo_factory=self._undo_factory)
+        if not prepared.ok:
+            return LaunchResult(
+                status=(
+                    "error" if prepared.status == "error" else "blocked"
+                ),
+                action_id=action_id,
+                message=prepared.reason or "Target preparation failed.",
+            )
+        outcome = switch_prepared_context(
+            runtime,
+            prepared,
+            destination,
+            convert_selection=bool(convert_selection),
+            hold_guard=lambda: _hold_guard(runtime),
+        )
+        if not outcome.ok:
+            return LaunchResult(
+                status="blocked" if outcome.status == "blocked" else "error",
+                action_id=action_id,
+                message=outcome.reason,
+            )
+        return LaunchResult(
+            status="noop" if outcome.status == "noop" else "launched",
+            action_id=action_id,
+            message=outcome.reason,
+        )
+
+    # -- diagnostics -------------------------------------------------------
+
+    def diagnostic_state(self, *, observe: bool = True) -> Dict[str, Any]:
+        """Return redacted V2 diagnostic fields without preparing anything."""
+
+        assessment = self._last_assessment
+        if observe and assessment is None and self._runtime is not None:
+            try:
+                assessment = inspect_target(self._runtime)
+            except Exception:
+                assessment = None
+        missing = maneuver_dispatch.missing_handlers()
+        idle = "unavailable"
+        ep_mode = "unavailable"
+        if assessment is not None and self._runtime is not None and assessment.ep is not None:
+            ep_mode, readable = maneuver_dispatch.read_ep_mode(
+                self._runtime, assessment.ep
+            )
+            idle = ep_mode if readable else "unreadable"
+        return {
+            "atlas_schema": self.atlas_schema_version(),
+            "atlas_entries": self.atlas_entry_count(),
+            "overlay_warning": self._overlay_warning or "none",
+            "context": assessment.context if assessment is not None else "unknown",
+            "prep_tier": assessment.tier if assessment is not None else "blocked",
+            "blocked_category": (
+                assessment.category if assessment is not None else "unavailable"
+            ),
+            "handler_coverage": (
+                "complete"
+                if not missing and not self._registry_issues
+                else "%d issue(s)" % (len(missing) + len(self._registry_issues))
+            ),
+            "idle_mode": idle,
+            "ep_mode": ep_mode,
+            "caddy_active": self._caddy_active,
+            "ambiguous_mode": self._ambiguous_mode,
+            "rollback_lockout": self._topology_disabled_reason is not None,
+            "loaded_sha": self._loaded_sha or "unknown",
+        }
+
+    @property
+    def rollback_lockout_reason(self) -> Optional[str]:
+        return self._topology_disabled_reason
+
+
+def make_snapshot(**kwargs: Any) -> Any:
+    """Construct the frozen ``ManeuverSnapshot`` with the plan's exact fields."""
+
+    from .preparation import ManeuverSnapshot
+
+    return ManeuverSnapshot(**kwargs)
+
+
+def _passive_prepared(assessment: TargetAssessment) -> PreparedTarget:
+    if assessment.node is None:
+        return PreparedTarget(
+            ok=False,
+            status="blocked",
+            tier=assessment.tier,
+            reason=assessment.reason or "Select one object.",
+        )
+    return PreparedTarget(
+        ok=True,
+        status="prepared",
+        tier=assessment.tier,
+        reason="",
+        node=assessment.node,
+        base=assessment.base,
+        ep=assessment.ep,
+        node_token=assessment.node_token,
+        base_token=assessment.base_token,
+        context=assessment.context,
+        raw_level=assessment.raw_level or 0,
+        indices=tuple(assessment.indices),
+        selection_count=assessment.selection_count,
+        geometry=assessment.geometry,
+        settings_token=assessment.settings_token,
+        stack_after=assessment.stack,
+        show_end_result=assessment.show_end_result,
+        task_mode=assessment.task_mode,
+    )
+
+
+def _prepared_after_switch(prepared: PreparedTarget, switch: Any) -> PreparedTarget:
+    return PreparedTarget(
+        ok=True,
+        status="prepared",
+        tier=prepared.tier,
+        reason="",
+        node=prepared.node,
+        base=prepared.base,
+        ep=prepared.ep,
+        node_token=prepared.node_token,
+        base_token=prepared.base_token,
+        context=switch.context,
+        raw_level=switch.raw_level,
+        indices=tuple(switch.indices or ()),
+        selection_count=switch.selection_count,
+        geometry=prepared.geometry,
+        settings_token=prepared.settings_token,
+        stack_after=prepared.stack_after,
+        show_end_result=prepared.show_end_result,
+        task_mode=prepared.task_mode,
+        converted=prepared.converted,
+        collapsed=prepared.collapsed,
+    )
+
+
+def _snapshot_identity_matches(left: Any, right: Any) -> bool:
+    if left is None or right is None:
+        return False
+    for attribute in (
+        "context",
+        "target_token",
+        "selection_token",
+        "selection_count",
+        "revision",
+        "safety_token",
+    ):
+        if getattr(left, attribute, None) != getattr(right, attribute, None):
+            return False
+    return True
+
+
+def _snapshot_mismatch(expected: Any, fresh: Any) -> Optional[str]:
+    if expected is None:
+        return "Expected snapshot is missing"
+    comparisons = (
+        ("context", "context"),
+        ("editing target", "target_token"),
+        ("selection", "selection_token"),
+        ("selection count", "selection_count"),
+        ("safety token", "safety_token"),
+    )
+    for label, attribute in comparisons:
+        expected_value = getattr(expected, attribute, None)
+        fresh_value = getattr(fresh, attribute, None)
+        if expected_value != fresh_value:
+            return "Context changed before launch (%s)" % label
+    return None
+
+
+def _has_member(
+    runtime: Any, owner: str, member: str, assessment: Optional[TargetAssessment]
+) -> bool:
+    if owner == "runtime":
+        target = runtime
+        if member == "Editable_Poly":
+            return getattr(target, member, None) is not None
+    elif owner == "node":
+        target = assessment.node if assessment is not None else None
+    elif owner == "showEndResult":
+        if assessment is None:
+            return False
+        return assessment.show_end_result is not None
+    elif owner == "editable_poly":
+        target = assessment.ep if assessment is not None else None
+        if target is None and assessment is not None and assessment.tier == "convert":
+            # Tier 1 preparation creates the EditablePoly interface before the
+            # handler runs; preflighting must not convert a primitive first.
+            return True
+    elif owner == "base_object":
+        target = assessment.base if assessment is not None else None
+    elif owner == "PolyToolsPolyDraw":
+        if runtime is None:
+            return False
+        try:
+            target = getattr(runtime, "PolyToolsPolyDraw", None)
+        except Exception:
+            return False
+    else:
+        if runtime is None:
+            return False
+        try:
+            if owner == "polyop":
+                target = getattr(runtime, "polyop", None)
+            elif owner == "toolMode":
+                target = getattr(runtime, "toolMode", None)
+            else:
+                target = None
+        except Exception:
+            return False
+    if target is None:
+        return False
+    try:
+        value = getattr(target, member)
+    except Exception:
+        return False
+    if value is None:
+        return False
+    try:
+        return str(value).strip().lower() != "undefined"
+    except Exception:
+        return True
+
+
+def _read_open_edges(
+    runtime: Any, assessment: TargetAssessment
+) -> Optional[Tuple[int, ...]]:
+    if runtime is None or assessment.node is None:
+        return None
+    try:
+        polyop = getattr(runtime, "polyop", None)
+        bitarray = polyop.getOpenEdges(assessment.node)
+    except Exception:
+        return None
+    try:
+        return tuple(sorted(int(value) for value in bitarray))
+    except Exception:
+        return None
+
+
 def _context_mismatch(
     expected_context: ContextSnapshot, fresh: ContextSnapshot
 ) -> Optional[str]:
@@ -1491,4 +2746,4 @@ def _context_mismatch(
     return None
 
 
-__all__ = ["MaxHostAdapter"]
+__all__ = ["ManeuverHostAdapter", "MaxHostAdapter"]

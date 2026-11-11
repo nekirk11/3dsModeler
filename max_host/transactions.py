@@ -95,6 +95,34 @@ def _documented_flag(value: Any) -> Optional[bool]:
     return None
 
 
+def hold_flags(runtime: Any) -> tuple[bool, bool, bool]:
+    """Return ``(holding, restore_or_redoing, readable)`` without mutation.
+
+    V2 snapshots keep the two documented flags separate so charging, rollback
+    and redo states are not conflated.  Any unreadable/unavailable query yields
+    ``readable=False``; callers must fail closed rather than assume "not held".
+    """
+
+    try:
+        the_hold = getattr(runtime, "theHold", None)
+    except Exception:
+        return False, False, False
+    if _is_undefined(the_hold):
+        return False, False, False
+    holding = getattr(the_hold, "Holding", None)
+    restore_or_redoing = getattr(the_hold, "RestoreOrRedoing", None)
+    if not callable(holding) or not callable(restore_or_redoing):
+        return False, False, False
+    try:
+        holding_flag = _documented_flag(holding())
+        restore_flag = _documented_flag(restore_or_redoing())
+    except Exception:
+        return False, False, False
+    if holding_flag is None or restore_flag is None:
+        return False, False, False
+    return holding_flag, restore_flag, True
+
+
 def hold_state(runtime: Any) -> tuple[bool, str]:
     """Read the documented MAXScript ``theHold`` state without mutation.
 
@@ -246,6 +274,7 @@ __all__ = [
     "MAX_LABEL_LENGTH",
     "TransactionError",
     "TransactionOutcome",
+    "hold_flags",
     "hold_reason",
     "hold_state",
     "run_undoable",

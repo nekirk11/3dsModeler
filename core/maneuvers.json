@@ -1,0 +1,3497 @@
+{
+  "schema_version": 2,
+  "maneuvers": [
+    {
+      "id": "bevel",
+      "label": "Bevel",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "bevel",
+          "polybevel",
+          "chamfer"
+        ],
+        "blender": [
+          "bevel",
+          "chamfer"
+        ],
+        "maya": [
+          "bevel",
+          "chamfer"
+        ],
+        "max2025": [
+          "chamfer",
+          "bevel",
+          "round edge"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "Chamfer",
+              "api": "EditablePoly.PopupDialog #Chamfer",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "ChamferVertex",
+              "api": "EditablePoly.toggleCommandMode #ChamferVertex",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polybevel (points/edges)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polybevel.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.bevel",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.bevel"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "Chamfer",
+              "api": "EditablePoly.PopupDialog #Chamfer",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "ChamferEdge",
+              "api": "EditablePoly.toggleCommandMode #ChamferEdge",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polybevel (points/edges)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polybevel.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.bevel",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.bevel"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "Bevel",
+              "api": "EditablePoly.PopupDialog #Bevel",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "Bevel",
+              "api": "EditablePoly.toggleCommandMode #Bevel",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polybevel (points/edges)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polybevel.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.bevel",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.bevel"
+          }
+        }
+      }
+    },
+    {
+      "id": "extrude",
+      "label": "Extrude",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "polyextrude",
+          "extrude"
+        ],
+        "blender": [
+          "extrude",
+          "extrude region"
+        ],
+        "maya": [
+          "extrude"
+        ],
+        "max2025": [
+          "extrude"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "Extrude",
+              "api": "EditablePoly.PopupDialog #Extrude",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "ExtrudeVertex",
+              "api": "EditablePoly.toggleCommandMode #ExtrudeVertex",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polyextrude",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polyextrude.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.extrude_region_move",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.extrude_region_move"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "Extrude",
+              "api": "EditablePoly.PopupDialog #Extrude",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "ExtrudeEdge",
+              "api": "EditablePoly.toggleCommandMode #ExtrudeEdge",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polyextrude",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polyextrude.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.extrude_region_move",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.extrude_region_move"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "Extrude",
+              "api": "EditablePoly.PopupDialog #Extrude",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "ExtrudeFace",
+              "api": "EditablePoly.toggleCommandMode #ExtrudeFace",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polyextrude",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polyextrude.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.extrude_region_move",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.extrude_region_move"
+          }
+        }
+      }
+    },
+    {
+      "id": "inset",
+      "label": "Inset",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "polyextrude",
+          "inset",
+          "inset region"
+        ],
+        "blender": [
+          "inset",
+          "inset faces"
+        ],
+        "maya": [
+          "inset"
+        ],
+        "max2025": [
+          "inset"
+        ]
+      },
+      "contexts": {
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "Inset",
+              "api": "EditablePoly.PopupDialog #Inset",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "InsetFace",
+              "api": "EditablePoly.toggleCommandMode #InsetFace",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polyextrude inset mode",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polyextrude.html",
+            "note": "Conceptual reference: Houdini exposes inset as a PolyExtrude mode."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.inset",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.inset"
+          }
+        }
+      }
+    },
+    {
+      "id": "dissolve",
+      "label": "Dissolve",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "dissolve",
+          "dissolve edges"
+        ],
+        "blender": [
+          "dissolve edges"
+        ],
+        "maya": [
+          "dissolve"
+        ],
+        "max2025": [
+          "dissolve",
+          "remove edge"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "Remove",
+              "api": "EditablePoly.buttonOp #Remove",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP dissolve (points/edges)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/dissolve.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.dissolve_verts / dissolve_edges",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.dissolve_edges"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "composite",
+              "target": "clean_dissolve_edges",
+              "api": "EditablePoly.Remove selLevel:#Edge + verified endpoint cleanup",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP dissolve (points/edges)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/dissolve.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.dissolve_verts / dissolve_edges",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.dissolve_edges"
+          }
+        }
+      }
+    },
+    {
+      "id": "delete",
+      "label": "Delete components",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "blast",
+          "delete"
+        ],
+        "blender": [
+          "delete"
+        ],
+        "maya": [
+          "delete"
+        ],
+        "max2025": [
+          "delete"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "Delete",
+              "api": "EditablePoly.buttonOp #Delete",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP blast",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/blast.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.delete",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.delete"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "Delete",
+              "api": "EditablePoly.buttonOp #Delete",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP blast",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/blast.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.delete",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.delete"
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "Delete",
+              "api": "EditablePoly.buttonOp #Delete",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP blast",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/blast.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.delete",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.delete"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "Delete",
+              "api": "EditablePoly.buttonOp #Delete",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP blast",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/blast.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.delete",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.delete"
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "Delete",
+              "api": "EditablePoly.buttonOp #Delete",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP blast",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/blast.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.delete",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.delete"
+          }
+        }
+      }
+    },
+    {
+      "id": "loop_cut",
+      "label": "Loop cut",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "edge loop",
+          "polysplit",
+          "loop"
+        ],
+        "blender": [
+          "loop cut",
+          "loopcut"
+        ],
+        "maya": [
+          "insert edge loop"
+        ],
+        "max2025": [
+          "loop",
+          "connect edges"
+        ]
+      },
+      "contexts": {
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "ConnectEdges",
+              "api": "EditablePoly.PopupDialog #ConnectEdges",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "SwiftLoop",
+              "api": "PolyToolsPolyDraw.SwiftLoop() (Graphite handler; verify in 3ds Max 2025)",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2017/ENU/MAXScript-Help/files/GUID-6752DC9D-9EF4-4649-9388-A814376A0B0D.htm"
+            }
+          },
+          "houdini": {
+            "api": "SOP polysplit Edge Loop tool",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polysplit.html",
+            "note": "Houdini's Edge Loop shelf tool uses PolySplit 2.0; it is a viewport tool, not a dedicated SOP."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.loopcut_slide",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.loopcut_slide"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "command_mode",
+              "target": "SwiftLoop",
+              "api": "PolyToolsPolyDraw.SwiftLoop() (Graphite handler; verify in 3ds Max 2025)",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2017/ENU/MAXScript-Help/files/GUID-6752DC9D-9EF4-4649-9388-A814376A0B0D.htm"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "SwiftLoop",
+              "api": "PolyToolsPolyDraw.SwiftLoop() (Graphite handler; verify in 3ds Max 2025)",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2017/ENU/MAXScript-Help/files/GUID-6752DC9D-9EF4-4649-9388-A814376A0B0D.htm"
+            }
+          },
+          "houdini": {
+            "api": "SOP polysplit Edge Loop tool",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polysplit.html",
+            "note": "Houdini's Edge Loop shelf tool uses PolySplit 2.0; it is a viewport tool, not a dedicated SOP."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.loopcut_slide",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.loopcut_slide"
+          }
+        }
+      }
+    },
+    {
+      "id": "cut",
+      "label": "Cut",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "polycut",
+          "knife",
+          "cut"
+        ],
+        "blender": [
+          "knife",
+          "cut"
+        ],
+        "maya": [
+          "cut"
+        ],
+        "max2025": [
+          "cut"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "command_mode",
+              "target": "CutVertex",
+              "api": "EditablePoly.toggleCommandMode #CutVertex",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "CutVertex",
+              "api": "EditablePoly.toggleCommandMode #CutVertex",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polycut",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polycut.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.knife_tool",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.knife_tool"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "command_mode",
+              "target": "CutEdge",
+              "api": "EditablePoly.toggleCommandMode #CutEdge",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "CutEdge",
+              "api": "EditablePoly.toggleCommandMode #CutEdge",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polycut",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polycut.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.knife_tool",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.knife_tool"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "command_mode",
+              "target": "CutFace",
+              "api": "EditablePoly.toggleCommandMode #CutFace",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "CutFace",
+              "api": "EditablePoly.toggleCommandMode #CutFace",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polycut",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polycut.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.knife_tool",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.knife_tool"
+          }
+        }
+      }
+    },
+    {
+      "id": "quick_slice",
+      "label": "Quick slice",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "polysplit",
+          "slice"
+        ],
+        "blender": [
+          "bisect",
+          "slice"
+        ],
+        "maya": [
+          "quick slice"
+        ],
+        "max2025": [
+          "quick slice",
+          "slice"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "command_mode",
+              "target": "QuickSlice",
+              "api": "EditablePoly.toggleCommandMode #QuickSlice",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "QuickSlice",
+              "api": "EditablePoly.toggleCommandMode #QuickSlice",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polycut / polysplit",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polycut.html",
+            "note": "Conceptual reference: Houdini has no dedicated quick-slice SOP."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.bisect",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.bisect"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "command_mode",
+              "target": "QuickSlice",
+              "api": "EditablePoly.toggleCommandMode #QuickSlice",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "QuickSlice",
+              "api": "EditablePoly.toggleCommandMode #QuickSlice",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polycut / polysplit",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polycut.html",
+            "note": "Conceptual reference: Houdini has no dedicated quick-slice SOP."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.bisect",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.bisect"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "command_mode",
+              "target": "QuickSlice",
+              "api": "EditablePoly.toggleCommandMode #QuickSlice",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "QuickSlice",
+              "api": "EditablePoly.toggleCommandMode #QuickSlice",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polycut / polysplit",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polycut.html",
+            "note": "Conceptual reference: Houdini has no dedicated quick-slice SOP."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.bisect",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.bisect"
+          }
+        }
+      }
+    },
+    {
+      "id": "bridge",
+      "label": "Bridge",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "bridge",
+          "bridge edge"
+        ],
+        "blender": [
+          "bridge edge loops"
+        ],
+        "maya": [
+          "bridge"
+        ],
+        "max2025": [
+          "bridge"
+        ]
+      },
+      "contexts": {
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "BridgeEdge",
+              "api": "EditablePoly.PopupDialog #BridgeEdge",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "BridgeEdge",
+              "api": "EditablePoly.toggleCommandMode #BridgeEdge",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP bridge",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/bridge.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.bridge_edge_loops",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.bridge_edge_loops"
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "BridgeBorder",
+              "api": "EditablePoly.PopupDialog #BridgeBorder",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "BridgeBorder",
+              "api": "EditablePoly.toggleCommandMode #BridgeBorder",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP bridge",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/bridge.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.bridge_edge_loops",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.bridge_edge_loops"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "BridgePolygon",
+              "api": "EditablePoly.PopupDialog #BridgePolygon",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "BridgePolygon",
+              "api": "EditablePoly.toggleCommandMode #BridgePolygon",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP bridge",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/bridge.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.bridge_edge_loops",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.bridge_edge_loops"
+          }
+        }
+      }
+    },
+    {
+      "id": "fill",
+      "label": "Fill hole",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "polyfill",
+          "fill hole",
+          "cap"
+        ],
+        "blender": [
+          "fill holes",
+          "fill"
+        ],
+        "maya": [
+          "fill hole"
+        ],
+        "max2025": [
+          "cap",
+          "close hole",
+          "fill hole"
+        ]
+      },
+      "contexts": {
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "Cap",
+              "api": "EditablePoly.buttonOp #Cap",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polyfill",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polyfill.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.fill_holes",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.fill_holes"
+          }
+        }
+      }
+    },
+    {
+      "id": "weld",
+      "label": "Weld",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "fuse",
+          "weld"
+        ],
+        "blender": [
+          "merge by distance",
+          "remove doubles"
+        ],
+        "maya": [
+          "merge vertices"
+        ],
+        "max2025": [
+          "weld",
+          "weld selected"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "Weld",
+              "api": "EditablePoly.PopupDialog #WeldSelected",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "Weld",
+              "api": "EditablePoly.toggleCommandMode #Weld",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP fuse",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/fuse.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.remove_doubles",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.remove_doubles"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "Weld",
+              "api": "EditablePoly.PopupDialog #WeldSelected",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "Weld",
+              "api": "EditablePoly.toggleCommandMode #Weld",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP fuse",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/fuse.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.remove_doubles",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.remove_doubles"
+          }
+        }
+      }
+    },
+    {
+      "id": "target_weld",
+      "label": "Target weld",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "fuse",
+          "target weld"
+        ],
+        "blender": [
+          "merge",
+          "target weld"
+        ],
+        "maya": [
+          "target weld"
+        ],
+        "max2025": [
+          "target weld",
+          "weld"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "command_mode",
+              "target": "Weld",
+              "api": "EditablePoly.toggleCommandMode #Weld",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "Weld",
+              "api": "EditablePoly.toggleCommandMode #Weld",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP fuse with target snapping",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/fuse.html",
+            "note": "Conceptual reference: Houdini Fuse snaps points by proximity rather than an explicit target pick."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.merge",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.merge",
+            "note": "Blender merge chooses a target type rather than a second picked vertex."
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "command_mode",
+              "target": "Weld",
+              "api": "EditablePoly.toggleCommandMode #Weld",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "command_mode",
+              "target": "Weld",
+              "api": "EditablePoly.toggleCommandMode #Weld",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP fuse with target snapping",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/fuse.html",
+            "note": "Conceptual reference: Houdini Fuse snaps points by proximity rather than an explicit target pick."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.merge",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.merge",
+            "note": "Blender merge chooses a target type rather than a second picked vertex."
+          }
+        }
+      }
+    },
+    {
+      "id": "collapse",
+      "label": "Collapse components",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "edgecollapse",
+          "collapse"
+        ],
+        "blender": [
+          "collapse edges",
+          "edge collapse"
+        ],
+        "maya": [
+          "collapse"
+        ],
+        "max2025": [
+          "collapse"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "Collapse",
+              "api": "EditablePoly.buttonOp #Collapse",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP edgecollapse",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/edgecollapse.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.edge_collapse",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.edge_collapse"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "Collapse",
+              "api": "EditablePoly.buttonOp #Collapse",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP edgecollapse",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/edgecollapse.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.edge_collapse",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.edge_collapse"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "Collapse",
+              "api": "EditablePoly.buttonOp #Collapse",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP edgecollapse",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/edgecollapse.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.edge_collapse",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.edge_collapse"
+          }
+        }
+      }
+    },
+    {
+      "id": "split_edges",
+      "label": "Split edges",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "polysplit",
+          "split edges"
+        ],
+        "blender": [
+          "edge split",
+          "split"
+        ],
+        "maya": [
+          "split edges"
+        ],
+        "max2025": [
+          "split edges"
+        ]
+      },
+      "contexts": {
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "SplitEdges",
+              "api": "EditablePoly.buttonOp #SplitEdges",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP polysplit",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/polysplit.html",
+            "note": "Conceptual reference: Houdini splits through PolySplit rather than a one-button edge split."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.edge_split",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.edge_split"
+          }
+        }
+      }
+    },
+    {
+      "id": "break_vertices",
+      "label": "Break vertices",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "vertexsplit",
+          "break"
+        ],
+        "blender": [
+          "rip vertices",
+          "rip"
+        ],
+        "maya": [
+          "split vertices"
+        ],
+        "max2025": [
+          "break vertices",
+          "break"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "BreakVertex",
+              "api": "EditablePoly.buttonOp #BreakVertex",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP vertexsplit",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/vertexsplit.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.rip",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.rip"
+          }
+        }
+      }
+    },
+    {
+      "id": "select_loop",
+      "label": "Select edge loop",
+      "group": "Selection",
+      "aliases": {
+        "houdini_modeler": [
+          "groupfindpath",
+          "edge loop select"
+        ],
+        "blender": [
+          "select loop",
+          "loop select"
+        ],
+        "maya": [
+          "select edge loop"
+        ],
+        "max2025": [
+          "select loop",
+          "edge loop"
+        ]
+      },
+      "contexts": {
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "SelectEdgeLoop",
+              "api": "EditablePoly.buttonOp #SelectEdgeLoop",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP groupfindpath loop style",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/groupfindpath.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.loop_select",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.loop_select"
+          }
+        }
+      }
+    },
+    {
+      "id": "select_ring",
+      "label": "Select edge ring",
+      "group": "Selection",
+      "aliases": {
+        "houdini_modeler": [
+          "groupfindpath",
+          "edge ring select"
+        ],
+        "blender": [
+          "select ring",
+          "edge ring"
+        ],
+        "maya": [
+          "select edge ring"
+        ],
+        "max2025": [
+          "select ring",
+          "edge ring"
+        ]
+      },
+      "contexts": {
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "SelectEdgeRing",
+              "api": "EditablePoly.buttonOp #SelectEdgeRing",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP groupfindpath ring style",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/groupfindpath.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.loop_select ring mode",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.loop_select",
+            "note": "Blender exposes ring selection as an option of loop_select."
+          }
+        }
+      }
+    },
+    {
+      "id": "grow_selection",
+      "label": "Grow selection",
+      "group": "Selection",
+      "aliases": {
+        "houdini_modeler": [
+          "groupexpand",
+          "grow selection"
+        ],
+        "blender": [
+          "select more",
+          "grow selection"
+        ],
+        "maya": [
+          "grow selection"
+        ],
+        "max2025": [
+          "grow selection",
+          "grow"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "GrowSelection",
+              "api": "EditablePoly.buttonOp #GrowSelection",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP groupexpand",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/groupexpand.html",
+            "note": "Conceptual reference: Houdini expands groups rather than an edit-mode selection."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_more",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_more"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "GrowSelection",
+              "api": "EditablePoly.buttonOp #GrowSelection",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP groupexpand",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/groupexpand.html",
+            "note": "Conceptual reference: Houdini expands groups rather than an edit-mode selection."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_more",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_more"
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "GrowSelection",
+              "api": "EditablePoly.buttonOp #GrowSelection",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP groupexpand",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/groupexpand.html",
+            "note": "Conceptual reference: Houdini expands groups rather than an edit-mode selection."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_more",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_more"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "GrowSelection",
+              "api": "EditablePoly.buttonOp #GrowSelection",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP groupexpand",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/groupexpand.html",
+            "note": "Conceptual reference: Houdini expands groups rather than an edit-mode selection."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_more",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_more"
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "GrowSelection",
+              "api": "EditablePoly.buttonOp #GrowSelection",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP groupexpand",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/groupexpand.html",
+            "note": "Conceptual reference: Houdini expands groups rather than an edit-mode selection."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_more",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_more"
+          }
+        }
+      }
+    },
+    {
+      "id": "shrink_selection",
+      "label": "Shrink selection",
+      "group": "Selection",
+      "aliases": {
+        "houdini_modeler": [
+          "group shrink",
+          "shrink selection"
+        ],
+        "blender": [
+          "select less",
+          "shrink selection"
+        ],
+        "maya": [
+          "shrink selection"
+        ],
+        "max2025": [
+          "shrink selection",
+          "shrink"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "ShrinkSelection",
+              "api": "EditablePoly.buttonOp #ShrinkSelection",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection group operations",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html",
+            "note": "Conceptual reference: Houdini has no direct shrink-selection SOP."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_less",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_less"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "ShrinkSelection",
+              "api": "EditablePoly.buttonOp #ShrinkSelection",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection group operations",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html",
+            "note": "Conceptual reference: Houdini has no direct shrink-selection SOP."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_less",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_less"
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "ShrinkSelection",
+              "api": "EditablePoly.buttonOp #ShrinkSelection",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection group operations",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html",
+            "note": "Conceptual reference: Houdini has no direct shrink-selection SOP."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_less",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_less"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "ShrinkSelection",
+              "api": "EditablePoly.buttonOp #ShrinkSelection",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection group operations",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html",
+            "note": "Conceptual reference: Houdini has no direct shrink-selection SOP."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_less",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_less"
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "ShrinkSelection",
+              "api": "EditablePoly.buttonOp #ShrinkSelection",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection group operations",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html",
+            "note": "Conceptual reference: Houdini has no direct shrink-selection SOP."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_less",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_less"
+          }
+        }
+      }
+    },
+    {
+      "id": "clear_selection",
+      "label": "Clear selection",
+      "group": "Selection",
+      "aliases": {
+        "houdini_modeler": [
+          "selection clear",
+          "deselect"
+        ],
+        "blender": [
+          "deselect all",
+          "clear selection"
+        ],
+        "maya": [
+          "clear selection"
+        ],
+        "max2025": [
+          "clear selection",
+          "deselect"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "polyop",
+              "target": "clear_selection",
+              "api": "EditablePoly.SetSelection #Vertex #{}",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "polyop",
+              "target": "clear_selection",
+              "api": "EditablePoly.SetSelection #Vertex #{}",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.clear()",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#clear"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_all(action='DESELECT')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_all"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "polyop",
+              "target": "clear_selection",
+              "api": "EditablePoly.SetSelection #Edge #{}",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "polyop",
+              "target": "clear_selection",
+              "api": "EditablePoly.SetSelection #Edge #{}",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.clear()",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#clear"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_all(action='DESELECT')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_all"
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "polyop",
+              "target": "clear_selection",
+              "api": "EditablePoly.SetSelection #Border #{}",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "polyop",
+              "target": "clear_selection",
+              "api": "EditablePoly.SetSelection #Border #{}",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.clear()",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#clear"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_all(action='DESELECT')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_all"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "polyop",
+              "target": "clear_selection",
+              "api": "EditablePoly.SetSelection #Face #{}",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "polyop",
+              "target": "clear_selection",
+              "api": "EditablePoly.SetSelection #Face #{}",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.clear()",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#clear"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_all(action='DESELECT')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_all"
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "polyop",
+              "target": "clear_selection",
+              "api": "EditablePoly.SetSelection #Element #{}",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "polyop",
+              "target": "clear_selection",
+              "api": "EditablePoly.SetSelection #Element #{}",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.clear()",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#clear"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_all(action='DESELECT')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_all"
+          }
+        }
+      }
+    },
+    {
+      "id": "convert_to_verts",
+      "label": "Convert to vertices",
+      "group": "Selection",
+      "aliases": {
+        "houdini_modeler": [
+          "selection convert",
+          "points"
+        ],
+        "blender": [
+          "vertex mode",
+          "convert to vertices"
+        ],
+        "maya": [
+          "convert to vertices"
+        ],
+        "max2025": [
+          "convert to verts",
+          "vertex level"
+        ]
+      },
+      "contexts": {
+        "object": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "vertex",
+              "api": "EditablePoly.ConvertSelection to #Vertex requireAll:false; subObjectLevel = 1",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "vertex",
+              "api": "EditablePoly.ConvertSelection to #Vertex requireAll:false; subObjectLevel = 1",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to points",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='VERT')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "vertex",
+              "api": "EditablePoly.ConvertSelection to #Vertex requireAll:false; subObjectLevel = 1",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "vertex",
+              "api": "EditablePoly.ConvertSelection to #Vertex requireAll:false; subObjectLevel = 1",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to points",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='VERT')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "vertex",
+              "api": "EditablePoly.ConvertSelection to #Vertex requireAll:false; subObjectLevel = 1",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "vertex",
+              "api": "EditablePoly.ConvertSelection to #Vertex requireAll:false; subObjectLevel = 1",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to points",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='VERT')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "vertex",
+              "api": "EditablePoly.ConvertSelection to #Vertex requireAll:false; subObjectLevel = 1",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "vertex",
+              "api": "EditablePoly.ConvertSelection to #Vertex requireAll:false; subObjectLevel = 1",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to points",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='VERT')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "vertex",
+              "api": "EditablePoly.ConvertSelection to #Vertex requireAll:false; subObjectLevel = 1",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "vertex",
+              "api": "EditablePoly.ConvertSelection to #Vertex requireAll:false; subObjectLevel = 1",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to points",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='VERT')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "vertex",
+              "api": "EditablePoly.ConvertSelection to #Vertex requireAll:false; subObjectLevel = 1",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "vertex",
+              "api": "EditablePoly.ConvertSelection to #Vertex requireAll:false; subObjectLevel = 1",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to points",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='VERT')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        }
+      }
+    },
+    {
+      "id": "convert_to_edges",
+      "label": "Convert to edges",
+      "group": "Selection",
+      "aliases": {
+        "houdini_modeler": [
+          "selection convert",
+          "edges"
+        ],
+        "blender": [
+          "edge mode",
+          "convert to edges"
+        ],
+        "maya": [
+          "convert to edges"
+        ],
+        "max2025": [
+          "convert to edges",
+          "edge level"
+        ]
+      },
+      "contexts": {
+        "object": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "edge",
+              "api": "EditablePoly.ConvertSelection to #Edge requireAll:false; subObjectLevel = 2",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "edge",
+              "api": "EditablePoly.ConvertSelection to #Edge requireAll:false; subObjectLevel = 2",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to edges",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='EDGE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "edge",
+              "api": "EditablePoly.ConvertSelection to #Edge requireAll:false; subObjectLevel = 2",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "edge",
+              "api": "EditablePoly.ConvertSelection to #Edge requireAll:false; subObjectLevel = 2",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to edges",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='EDGE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "edge",
+              "api": "EditablePoly.ConvertSelection to #Edge requireAll:false; subObjectLevel = 2",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "edge",
+              "api": "EditablePoly.ConvertSelection to #Edge requireAll:false; subObjectLevel = 2",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to edges",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='EDGE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "edge",
+              "api": "EditablePoly.ConvertSelection to #Edge requireAll:false; subObjectLevel = 2",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "edge",
+              "api": "EditablePoly.ConvertSelection to #Edge requireAll:false; subObjectLevel = 2",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to edges",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='EDGE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "edge",
+              "api": "EditablePoly.ConvertSelection to #Edge requireAll:false; subObjectLevel = 2",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "edge",
+              "api": "EditablePoly.ConvertSelection to #Edge requireAll:false; subObjectLevel = 2",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to edges",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='EDGE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "edge",
+              "api": "EditablePoly.ConvertSelection to #Edge requireAll:false; subObjectLevel = 2",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "edge",
+              "api": "EditablePoly.ConvertSelection to #Edge requireAll:false; subObjectLevel = 2",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to edges",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='EDGE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        }
+      }
+    },
+    {
+      "id": "convert_to_borders",
+      "label": "Convert to borders",
+      "group": "Selection",
+      "aliases": {
+        "houdini_modeler": [
+          "selection convert",
+          "border"
+        ],
+        "blender": [
+          "boundary edges"
+        ],
+        "maya": [
+          "convert to border"
+        ],
+        "max2025": [
+          "convert to borders",
+          "border level"
+        ]
+      },
+      "contexts": {
+        "object": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "border",
+              "api": "EditablePoly.ConvertSelection to #Border requireAll:false; subObjectLevel = 3",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "border",
+              "api": "EditablePoly.ConvertSelection to #Border requireAll:false; subObjectLevel = 3",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() boundary edges",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert",
+            "note": "Conceptual reference: Houdini converts selections, not Max border context."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='EDGE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode",
+            "note": "Blender has no separate border context; boundary edges are an edge selection."
+          }
+        },
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "border",
+              "api": "EditablePoly.ConvertSelection to #Border requireAll:false; subObjectLevel = 3",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "border",
+              "api": "EditablePoly.ConvertSelection to #Border requireAll:false; subObjectLevel = 3",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() boundary edges",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert",
+            "note": "Conceptual reference: Houdini converts selections, not Max border context."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='EDGE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode",
+            "note": "Blender has no separate border context; boundary edges are an edge selection."
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "border",
+              "api": "EditablePoly.ConvertSelection to #Border requireAll:false; subObjectLevel = 3",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "border",
+              "api": "EditablePoly.ConvertSelection to #Border requireAll:false; subObjectLevel = 3",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() boundary edges",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert",
+            "note": "Conceptual reference: Houdini converts selections, not Max border context."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='EDGE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode",
+            "note": "Blender has no separate border context; boundary edges are an edge selection."
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "border",
+              "api": "EditablePoly.ConvertSelection to #Border requireAll:false; subObjectLevel = 3",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "border",
+              "api": "EditablePoly.ConvertSelection to #Border requireAll:false; subObjectLevel = 3",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() boundary edges",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert",
+            "note": "Conceptual reference: Houdini converts selections, not Max border context."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='EDGE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode",
+            "note": "Blender has no separate border context; boundary edges are an edge selection."
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "border",
+              "api": "EditablePoly.ConvertSelection to #Border requireAll:false; subObjectLevel = 3",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "border",
+              "api": "EditablePoly.ConvertSelection to #Border requireAll:false; subObjectLevel = 3",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() boundary edges",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert",
+            "note": "Conceptual reference: Houdini converts selections, not Max border context."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='EDGE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode",
+            "note": "Blender has no separate border context; boundary edges are an edge selection."
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "border",
+              "api": "EditablePoly.ConvertSelection to #Border requireAll:false; subObjectLevel = 3",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "border",
+              "api": "EditablePoly.ConvertSelection to #Border requireAll:false; subObjectLevel = 3",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() boundary edges",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert",
+            "note": "Conceptual reference: Houdini converts selections, not Max border context."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='EDGE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode",
+            "note": "Blender has no separate border context; boundary edges are an edge selection."
+          }
+        }
+      }
+    },
+    {
+      "id": "convert_to_faces",
+      "label": "Convert to faces",
+      "group": "Selection",
+      "aliases": {
+        "houdini_modeler": [
+          "selection convert",
+          "primitives"
+        ],
+        "blender": [
+          "face mode",
+          "convert to faces"
+        ],
+        "maya": [
+          "convert to faces"
+        ],
+        "max2025": [
+          "convert to faces",
+          "face level"
+        ]
+      },
+      "contexts": {
+        "object": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "face",
+              "api": "EditablePoly.ConvertSelection to #Face requireAll:false; subObjectLevel = 4",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "face",
+              "api": "EditablePoly.ConvertSelection to #Face requireAll:false; subObjectLevel = 4",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to primitives",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='FACE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "face",
+              "api": "EditablePoly.ConvertSelection to #Face requireAll:false; subObjectLevel = 4",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "face",
+              "api": "EditablePoly.ConvertSelection to #Face requireAll:false; subObjectLevel = 4",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to primitives",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='FACE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "face",
+              "api": "EditablePoly.ConvertSelection to #Face requireAll:false; subObjectLevel = 4",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "face",
+              "api": "EditablePoly.ConvertSelection to #Face requireAll:false; subObjectLevel = 4",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to primitives",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='FACE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "face",
+              "api": "EditablePoly.ConvertSelection to #Face requireAll:false; subObjectLevel = 4",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "face",
+              "api": "EditablePoly.ConvertSelection to #Face requireAll:false; subObjectLevel = 4",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to primitives",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='FACE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "face",
+              "api": "EditablePoly.ConvertSelection to #Face requireAll:false; subObjectLevel = 4",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "face",
+              "api": "EditablePoly.ConvertSelection to #Face requireAll:false; subObjectLevel = 4",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to primitives",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='FACE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "context_switch",
+              "target": "face",
+              "api": "EditablePoly.ConvertSelection to #Face requireAll:false; subObjectLevel = 4",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            },
+            "empty_selection": {
+              "kind": "context_switch",
+              "target": "face",
+              "api": "EditablePoly.ConvertSelection to #Face requireAll:false; subObjectLevel = 4",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.Selection.convert() to primitives",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/Selection.html#convert"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.select_mode(type='FACE')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.select_mode"
+          }
+        }
+      }
+    },
+    {
+      "id": "subdivide",
+      "label": "Subdivide (tessellate)",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "subdivide",
+          "divide"
+        ],
+        "blender": [
+          "subdivide"
+        ],
+        "maya": [
+          "subdivide"
+        ],
+        "max2025": [
+          "subdivide",
+          "tessellate"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "Tessellate",
+              "api": "EditablePoly.PopupDialog #Tessellate",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP subdivide",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/subdivide.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.subdivide",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.subdivide"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "Tessellate",
+              "api": "EditablePoly.PopupDialog #Tessellate",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP subdivide",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/subdivide.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.subdivide",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.subdivide"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "Tessellate",
+              "api": "EditablePoly.PopupDialog #Tessellate",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP subdivide",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/subdivide.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.subdivide",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.subdivide"
+          }
+        }
+      }
+    },
+    {
+      "id": "smooth",
+      "label": "Smooth subdivision (MeshSmooth)",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "subdivide",
+          "smooth"
+        ],
+        "blender": [
+          "smooth vertices",
+          "subdivision"
+        ],
+        "maya": [
+          "smooth"
+        ],
+        "max2025": [
+          "smooth",
+          "meshsmooth",
+          "msmooth"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "MSmooth",
+              "api": "EditablePoly.PopupDialog #MeshSmooth",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP smooth",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/smooth.html",
+            "note": "Conceptual reference: Houdini Smooth relaxes geometry rather than performing Max-style MeshSmooth subdivision."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.vertices_smooth",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.vertices_smooth",
+            "note": "Conceptual reference: Blender smooths existing vertices; it is not Max MSmooth subdivision."
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "MSmooth",
+              "api": "EditablePoly.PopupDialog #MeshSmooth",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP smooth",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/smooth.html",
+            "note": "Conceptual reference: Houdini Smooth relaxes geometry rather than performing Max-style MeshSmooth subdivision."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.vertices_smooth",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.vertices_smooth",
+            "note": "Conceptual reference: Blender smooths existing vertices; it is not Max MSmooth subdivision."
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "caddy",
+              "target": "MSmooth",
+              "api": "EditablePoly.PopupDialog #MeshSmooth",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP smooth",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/smooth.html",
+            "note": "Conceptual reference: Houdini Smooth relaxes geometry rather than performing Max-style MeshSmooth subdivision."
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.vertices_smooth",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.vertices_smooth",
+            "note": "Conceptual reference: Blender smooths existing vertices; it is not Max MSmooth subdivision."
+          }
+        }
+      }
+    },
+    {
+      "id": "flip_normals",
+      "label": "Flip normals",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "reverse",
+          "flip normals"
+        ],
+        "blender": [
+          "flip normals",
+          "recalculate outside"
+        ],
+        "maya": [
+          "reverse normals"
+        ],
+        "max2025": [
+          "flip normals",
+          "reverse normals"
+        ]
+      },
+      "contexts": {
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "FlipNormals",
+              "api": "EditablePoly.buttonOp #FlipNormals",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP reverse",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/reverse.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.flip_normals",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.flip_normals"
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "FlipNormals",
+              "api": "EditablePoly.buttonOp #FlipNormals",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP reverse",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/reverse.html"
+          },
+          "blender": {
+            "api": "bpy.ops.mesh.flip_normals",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.mesh.html#bpy.ops.mesh.flip_normals"
+          }
+        }
+      }
+    },
+    {
+      "id": "planar_x",
+      "label": "Make planar X",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "flatten",
+          "planar x"
+        ],
+        "blender": [
+          "flatten x",
+          "scale zero x"
+        ],
+        "maya": [
+          "make planar x"
+        ],
+        "max2025": [
+          "make planar x",
+          "planar x"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInX",
+              "api": "EditablePoly.buttonOp #MakePlanarInX",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (X plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(0, 1, 1))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInX",
+              "api": "EditablePoly.buttonOp #MakePlanarInX",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (X plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(0, 1, 1))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInX",
+              "api": "EditablePoly.buttonOp #MakePlanarInX",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (X plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(0, 1, 1))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInX",
+              "api": "EditablePoly.buttonOp #MakePlanarInX",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (X plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(0, 1, 1))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInX",
+              "api": "EditablePoly.buttonOp #MakePlanarInX",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (X plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(0, 1, 1))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        }
+      }
+    },
+    {
+      "id": "planar_y",
+      "label": "Make planar Y",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "flatten",
+          "planar y"
+        ],
+        "blender": [
+          "flatten y",
+          "scale zero y"
+        ],
+        "maya": [
+          "make planar y"
+        ],
+        "max2025": [
+          "make planar y",
+          "planar y"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInY",
+              "api": "EditablePoly.buttonOp #MakePlanarInY",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (Y plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(1, 0, 1))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInY",
+              "api": "EditablePoly.buttonOp #MakePlanarInY",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (Y plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(1, 0, 1))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInY",
+              "api": "EditablePoly.buttonOp #MakePlanarInY",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (Y plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(1, 0, 1))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInY",
+              "api": "EditablePoly.buttonOp #MakePlanarInY",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (Y plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(1, 0, 1))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInY",
+              "api": "EditablePoly.buttonOp #MakePlanarInY",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (Y plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(1, 0, 1))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        }
+      }
+    },
+    {
+      "id": "planar_z",
+      "label": "Make planar Z",
+      "group": "Modeling",
+      "aliases": {
+        "houdini_modeler": [
+          "flatten",
+          "planar z"
+        ],
+        "blender": [
+          "flatten z",
+          "scale zero z"
+        ],
+        "maya": [
+          "make planar z"
+        ],
+        "max2025": [
+          "make planar z",
+          "planar z"
+        ]
+      },
+      "contexts": {
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInZ",
+              "api": "EditablePoly.buttonOp #MakePlanarInZ",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (Z plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(1, 1, 0))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInZ",
+              "api": "EditablePoly.buttonOp #MakePlanarInZ",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (Z plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(1, 1, 0))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInZ",
+              "api": "EditablePoly.buttonOp #MakePlanarInZ",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (Z plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(1, 1, 0))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInZ",
+              "api": "EditablePoly.buttonOp #MakePlanarInZ",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (Z plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(1, 1, 0))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "button_op",
+              "target": "MakePlanarInZ",
+              "api": "EditablePoly.buttonOp #MakePlanarInZ",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Editable-Meshes-Splines-Patches/Editable_Poly/GUID-90843EC5-AE3A-43EB-9406-A3631DAEADEF.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP flatten (Z plane)",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/flatten.html",
+            "note": "Conceptual reference: Houdini Flatten aligns points to a plane; it is not a component-planarize tool."
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize(value=(1, 1, 0))",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize",
+            "note": "Conceptual reference: scale the axis to zero rather than a Make Planar operator."
+          }
+        }
+      }
+    },
+    {
+      "id": "move",
+      "label": "Move",
+      "group": "Transform",
+      "aliases": {
+        "houdini_modeler": [
+          "xform",
+          "translate",
+          "move"
+        ],
+        "blender": [
+          "translate",
+          "move"
+        ],
+        "maya": [
+          "move",
+          "translate"
+        ],
+        "max2025": [
+          "move",
+          "translate"
+        ]
+      },
+      "contexts": {
+        "object": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "move",
+              "api": "max move",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform translate",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.translate",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.translate"
+          }
+        },
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "move",
+              "api": "max move",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform translate",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.translate",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.translate"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "move",
+              "api": "max move",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform translate",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.translate",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.translate"
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "move",
+              "api": "max move",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform translate",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.translate",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.translate"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "move",
+              "api": "max move",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform translate",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.translate",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.translate"
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "move",
+              "api": "max move",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform translate",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.translate",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.translate"
+          }
+        }
+      }
+    },
+    {
+      "id": "rotate",
+      "label": "Rotate",
+      "group": "Transform",
+      "aliases": {
+        "houdini_modeler": [
+          "xform",
+          "rotate"
+        ],
+        "blender": [
+          "rotate"
+        ],
+        "maya": [
+          "rotate"
+        ],
+        "max2025": [
+          "rotate"
+        ]
+      },
+      "contexts": {
+        "object": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "rotate",
+              "api": "max rotate",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform rotate",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.rotate",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.rotate"
+          }
+        },
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "rotate",
+              "api": "max rotate",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform rotate",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.rotate",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.rotate"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "rotate",
+              "api": "max rotate",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform rotate",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.rotate",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.rotate"
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "rotate",
+              "api": "max rotate",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform rotate",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.rotate",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.rotate"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "rotate",
+              "api": "max rotate",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform rotate",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.rotate",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.rotate"
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "rotate",
+              "api": "max rotate",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform rotate",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.rotate",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.rotate"
+          }
+        }
+      }
+    },
+    {
+      "id": "scale",
+      "label": "Scale",
+      "group": "Transform",
+      "aliases": {
+        "houdini_modeler": [
+          "xform",
+          "scale"
+        ],
+        "blender": [
+          "resize",
+          "scale"
+        ],
+        "maya": [
+          "scale"
+        ],
+        "max2025": [
+          "scale",
+          "resize"
+        ]
+      },
+      "contexts": {
+        "object": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "scale",
+              "api": "max scale",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform scale",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize"
+          }
+        },
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "scale",
+              "api": "max scale",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform scale",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "scale",
+              "api": "max scale",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform scale",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize"
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "scale",
+              "api": "max scale",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform scale",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "scale",
+              "api": "max scale",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform scale",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize"
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "scale",
+              "api": "max scale",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP xform scale",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/xform.html"
+          },
+          "blender": {
+            "api": "bpy.ops.transform.resize",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.transform.html#bpy.ops.transform.resize"
+          }
+        }
+      }
+    },
+    {
+      "id": "frame_selection",
+      "label": "Frame selection",
+      "group": "View",
+      "aliases": {
+        "houdini_modeler": [
+          "frame selected",
+          "frame selection"
+        ],
+        "blender": [
+          "frame selected",
+          "view selected"
+        ],
+        "maya": [
+          "frame selection"
+        ],
+        "max2025": [
+          "frame selection",
+          "zoom selection"
+        ]
+      },
+      "contexts": {
+        "object": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "frame_selection",
+              "api": "max zoomext sel",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.GeometryViewport.frameSelected()",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/GeometryViewport.html#frameSelected"
+          },
+          "blender": {
+            "api": "bpy.ops.view3d.view_selected",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.view3d.html#bpy.ops.view3d.view_selected"
+          }
+        },
+        "vertex": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "frame_selection",
+              "api": "max zoomext sel",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.GeometryViewport.frameSelected()",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/GeometryViewport.html#frameSelected"
+          },
+          "blender": {
+            "api": "bpy.ops.view3d.view_selected",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.view3d.html#bpy.ops.view3d.view_selected"
+          }
+        },
+        "edge": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "frame_selection",
+              "api": "max zoomext sel",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.GeometryViewport.frameSelected()",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/GeometryViewport.html#frameSelected"
+          },
+          "blender": {
+            "api": "bpy.ops.view3d.view_selected",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.view3d.html#bpy.ops.view3d.view_selected"
+          }
+        },
+        "border": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "frame_selection",
+              "api": "max zoomext sel",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.GeometryViewport.frameSelected()",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/GeometryViewport.html#frameSelected"
+          },
+          "blender": {
+            "api": "bpy.ops.view3d.view_selected",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.view3d.html#bpy.ops.view3d.view_selected"
+          }
+        },
+        "face": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "frame_selection",
+              "api": "max zoomext sel",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.GeometryViewport.frameSelected()",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/GeometryViewport.html#frameSelected"
+          },
+          "blender": {
+            "api": "bpy.ops.view3d.view_selected",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.view3d.html#bpy.ops.view3d.view_selected"
+          }
+        },
+        "element": {
+          "max2025": {
+            "with_selection": {
+              "kind": "max_command",
+              "target": "frame_selection",
+              "api": "max zoomext sel",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/Learning-MAXScript/Creating-Your-Own-Scripts/GUID-C778E515-8B85-4828-96E9-8CB41315E4C4.html"
+            }
+          },
+          "houdini": {
+            "api": "hou.GeometryViewport.frameSelected()",
+            "doc_url": "https://www.sidefx.com/docs/houdini/hom/hou/GeometryViewport.html#frameSelected"
+          },
+          "blender": {
+            "api": "bpy.ops.view3d.view_selected",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.view3d.html#bpy.ops.view3d.view_selected"
+          }
+        }
+      }
+    },
+    {
+      "id": "convert_to_poly",
+      "label": "Convert to poly",
+      "group": "Object",
+      "aliases": {
+        "houdini_modeler": [
+          "convert",
+          "to polygon"
+        ],
+        "blender": [
+          "convert to mesh",
+          "to mesh"
+        ],
+        "maya": [
+          "convert to polygon"
+        ],
+        "max2025": [
+          "convert to poly",
+          "editable poly"
+        ]
+      },
+      "contexts": {
+        "object": {
+          "max2025": {
+            "with_selection": {
+              "kind": "composite",
+              "target": "convert_to_poly",
+              "api": "convertTo node Editable_Poly",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/MAXWrapper-Value/GUID-95453E22-A022-4543-B31C-A052CECD3598.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP convert to polygons",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/convert.html"
+          },
+          "blender": {
+            "api": "bpy.ops.object.convert(target='MESH')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.object.html#bpy.ops.object.convert"
+          }
+        }
+      }
+    },
+    {
+      "id": "collapse_to_poly",
+      "label": "Collapse to poly",
+      "group": "Object",
+      "aliases": {
+        "houdini_modeler": [
+          "convert",
+          "freeze",
+          "to polygon"
+        ],
+        "blender": [
+          "convert to mesh",
+          "apply modifiers"
+        ],
+        "maya": [
+          "collapse stack",
+          "convert to polygon"
+        ],
+        "max2025": [
+          "collapse to poly",
+          "collapse stack",
+          "convert to poly"
+        ]
+      },
+      "contexts": {
+        "object": {
+          "max2025": {
+            "with_selection": {
+              "kind": "composite",
+              "target": "collapse_to_poly",
+              "api": "convertTo node Editable_Poly after owned stack collapse",
+              "doc_url": "https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/MAXWrapper-Value/GUID-95453E22-A022-4543-B31C-A052CECD3598.html"
+            }
+          },
+          "houdini": {
+            "api": "SOP convert",
+            "doc_url": "https://www.sidefx.com/docs/houdini/nodes/sop/convert.html",
+            "note": "No direct stack-collapse equivalent; conceptual conversion reference only."
+          },
+          "blender": {
+            "api": "bpy.ops.object.convert(target='MESH')",
+            "doc_url": "https://docs.blender.org/api/current/bpy.ops.object.html#bpy.ops.object.convert",
+            "note": "Conceptual reference: converting may apply evaluated modifiers; it is not a Max stack-collapse workflow."
+          }
+        }
+      }
+    }
+  ]
+}

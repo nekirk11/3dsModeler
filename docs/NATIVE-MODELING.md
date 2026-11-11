@@ -1,15 +1,127 @@
-# Native modeling expansion — W1 frozen contract gate
+# Native modeling expansion — V2 contracts and historical V1 gate
 
-**Status (2026-11-11):** W1 contract gate complete. W2 and W3 completed and
-released their paths; the integration owner reconciled the public seams and
-then applied the first review-cycle corrections recorded below. This document
-records frozen contracts, launcher behavior, coverage handoff, and manual
-acceptance cases. There is still no 3ds Max 2025 runtime available, so every
-native behavior remains **NOT RUN**; the browser sandbox remains
-**SIMULATED** and is not native evidence.
+**Status (2026-11-11):** V2 integration source-complete on `dev`; every native
+behavior remains **NOT RUN** because no 3ds Max 2025 runtime was available. The
+browser sandbox is **SIMULATED** and is not native evidence. The V1 contract
+below is frozen and retained for legacy tests/renderers, but it is no longer the
+normal native launch path.
 
-This page freezes the interfaces consumers must use. It does not claim that any
-Editable Poly operation works in Max.
+## V2 architecture
+
+```text
+core/maneuvers.json + optional checkout/user_aliases.json
+    -> core/atlas.py (strict validation, immutable atlas, overlay merge)
+    -> core/search.py + core/palette_controller.py
+    -> qt_ui/palette.py (render/input/focus only)
+                    |
+      core/maneuver_contracts.py:ManeuverHost seam
+          |                           |
+max_host/adapter.py:          core/maneuver_simulated.py:
+ManeuverHostAdapter           SimulatedManeuverHost
+    -> preparation.py + maneuver_dispatch.py
+    -> bindings.py / operations.py / transactions.py
+
+bootstrap.py composes widgets, controller, callbacks, diagnostics, teardown
+tools/max_pull_and_load.py/.ms owns persistent macros and local/update loaders
+```
+
+### Atlas and overlay
+
+`core/maneuvers.json` is UTF-8 JSON with exactly `schema_version: 2` and a
+nonempty ordered `maneuvers` list. Every maneuver has exactly `id`, `label`,
+`group`, `aliases`, `contexts`. IDs are lowercase snake_case from the frozen
+36-ID set. Declaration order is the final deterministic search tie-breaker.
+No descriptor contains Python, MAXScript, paths, or executable argument strings.
+
+Every context has exactly `max2025`, `houdini`, `blender`. A Max route has
+`with_selection` and/or `empty_selection`; each route has exactly `kind`,
+`target`, `api`, `doc_url`. `kind` is one of `caddy`, `command_mode`,
+`button_op`, `polyop`, `max_command`, `composite`, `context_switch`, and
+`target` must belong to that kind's fixed set in `TARGETS_BY_KIND`. `api` and
+`doc_url` are display/search metadata only; they are never interpreted, split,
+looked up, fetched at runtime, or executed. Houdini/Blender records are
+non-executable references with official HTTPS documentation links.
+
+Optional checkout-root `user_aliases.json` has `schema_version: 1` and optional
+`aliases`, `pinned`, `hidden`. It may extend aliases and ordering hints only; it
+cannot change targets, contexts, labels, URLs, or behavior. Invalid UTF-8/JSON,
+unknown fields/IDs, duplicates, symlinks, or nonregular files cause the whole
+overlay to be ignored with one sanitized warning. `hidden` wins over `pinned`;
+hidden applies only to maneuvers, not the three system commands. The file is
+git-ignored and excluded from portable archives.
+
+### Host seam and fixed dispatch
+
+`core/maneuver_contracts.py` freezes `ManeuverContext`, `ExecutionDescriptor`,
+`DccReference`, `ManeuverSpec`, `ManeuverAtlas`, `UserOverlay`,
+`ManeuverSnapshot`, `ManeuverRow`, `PaletteView`, `ManeuverRequest`,
+`Availability`/`LaunchResult` reuse, and the four-method `ManeuverHost` protocol:
+`snapshot`, `availability`, `execute`, `switch_context`.
+
+`max_host/maneuver_dispatch.py` exposes the host half of the registry. Its key
+sets must equal `TARGETS_BY_KIND` exactly (`contract_parity()` returns `()`);
+any mismatch is a configuration error that blocks dispatch. Handlers are
+reviewed Python functions. `Weld` maps to native `#WeldSelected` and `MSmooth`
+to `#MeshSmooth`; the JSON-visible target stays stable while `api` records the
+real call. Empty-selection bridge command modes have no verified Editable Poly
+2025 launcher, so those routes stay explicitly blocked. SwiftLoop uses the
+documented Graphite `PolyToolsPolyDraw.SwiftLoop()` handler and records mode
+provenance; it is not claimed as a published EP enum.
+
+### Three preparation tiers
+
+| Tier | Target | Behavior |
+| --- | --- | --- |
+| 1 `convert` | one non-instanced primitive or Editable Mesh, zero modifiers, single dependent base | Switch Modify, undoably convert to Editable Poly, reacquire base/interface, verify |
+| 2 `base_with_modifiers` | Editable Poly base with a stack, **no Edit_Poly anywhere** | Preserve stack byte-for-byte, step to base, set/retain `showEndResult=True`, edit base topology |
+| 3 `blocked` | instanced/shared base, unreadable sharing/stack, non-poly + modifiers, any Edit_Poly | Refuse before panel/base/geometry writes; name *Collapse to Poly* or manual Make Unique |
+
+`collapse_to_poly` is the only stack-collapse permission; it requires inline
+destructive confirmation and explains modifier loss and instancing impact.
+`convert_to_poly` uses Tier-1 restrictions and is not a collapse synonym.
+
+### Count routing, caddies, and undo
+
+After approved preparation and any pivot/context conversion, the host takes a
+fresh destination snapshot. Selection count routes the descriptor:
+`>0 -> with_selection`, `0 -> empty_selection`. A missing route reports why and
+never launches a different tool. Caddy/mode entry is `launched`; an immediate
+handler is `applied` only after its postcondition. Native caddies own their
+interactive transaction: do not hold `pymxs.undo`/`theHold` across a Qt/native
+loop, and never auto-accept Preview/OK. The completed auto-prep conversion is a
+separate undo record from the caddy's later edit. `theHold.Holding()` and
+`RestoreOrRedoing()` are checked immediately before any mutation; rollback
+failure latches native mutation disabled until a fresh Max session.
+
+### Clean Edge Dissolve
+
+`max_host/operations.py:clean_dissolve_edges` records selected edge IDs, endpoint
+vertex candidates, context, selection sets, and a slot identity guard before any
+removal. It removes the selected edges, then removes only surviving candidate
+vertices that are incident to exactly two collinear, opposite live edges.
+Corners, kinks, zero-length/ambiguous edges, branches, non-candidates, and
+unsupported nonmanifold cases are preserved. If Remove renumbers or identity is
+unprovable, the whole chunk rolls back; failed rollback latches. Both passes are
+one Max undo chunk.
+
+### Bootstrap and persistent macros
+
+`bootstrap.show_palette(controller=None)` composes the V2 controller/host and
+shows/raises/refocuses the one palette. `show_tools`, `show_menu`, and
+`install_launcher` forward to it. `switch_context` works without UI for the
+macros. `uninstall()` disposes only in-memory UI and owned hooks; it never
+deletes `3dsModeler.mcr`, removes hotkeys, clears lockout, or exits native
+modes. The launcher writes/verifies the owned MacroScript file and loads it into
+the live session via `rt.fileIn` (fallback `rt.macros.load`) so the
+`"3dsModeler"` category is available in **Customize > Hotkey Editor** without a
+restart. Hotkeys are assigned manually; no W/E/R/Space binding is changed.
+
+---
+
+## Historical V1 frozen contract
+
+This section records the frozen V1 interfaces consumers still exercise. It does
+not claim any Editable Poly operation works in Max.
 
 ## Frozen core symbols
 
