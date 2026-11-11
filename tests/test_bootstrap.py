@@ -8,6 +8,7 @@ lazy-import, prompt-registration, and teardown ordering only; they are not
 
 from __future__ import annotations
 
+import sys
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -147,7 +148,11 @@ class FakePalette:
         self.disposed = 0
         self._open = False
         self._disposed = False
+        self.input = object()
         FakePalette.instances.append(self)
+
+    def input_widget(self):
+        return self.input
 
     def show_at(self, global_pos=None, *, return_focus=None) -> None:
         self.shows.append(global_pos)
@@ -496,6 +501,47 @@ class BootstrapTests(unittest.TestCase):
             bootstrap.show_palette(FakeController())
         self.assertIn("V2", str(raised.exception))
         self.assertEqual(FakePalette.instances, [])
+
+    def test_show_palette_failure_cleans_owned_controller_and_reraises(self) -> None:
+        owned = FakeV2Controller()
+        with mock.patch.object(
+            bootstrap, "_create_palette_controller", lambda **kwargs: owned
+        ):
+            with mock.patch.object(
+                FakePalette, "show_at", side_effect=RuntimeError("launch failed")
+            ):
+                with self.assertRaises(RuntimeError) as raised:
+                    bootstrap.show_palette()
+
+        self.assertEqual(str(raised.exception), "launch failed")
+        self.assertIsNone(bootstrap._palette_controller)
+        self.assertFalse(bootstrap._owns_palette_controller)
+        self.assertIsNone(bootstrap._palette)
+        self.assertEqual(owned.disposed, 0, "rollback must not dispose the host")
+
+    def test_show_palette_disables_max_accelerators_for_the_input(self) -> None:
+        calls = []
+        fake_qtmax = SimpleNamespace(
+            DisableMaxAcceleratorsOnFocus=lambda widget, enabled: calls.append(
+                (widget, enabled)
+            )
+        )
+        controller = FakeV2Controller()
+
+        with mock.patch.dict(sys.modules, {"qtmax": fake_qtmax}):
+            palette = bootstrap.show_palette(controller)
+
+        self.assertEqual(calls, [(palette.input_widget(), True)])
+
+    def test_show_palette_tolerates_missing_accelerator_helper(self) -> None:
+        controller = FakeV2Controller()
+
+        with mock.patch.dict(
+            sys.modules, {"qtmax": SimpleNamespace(DisableMaxAcceleratorsOnFocus=None)}
+        ):
+            palette = bootstrap.show_palette(controller)
+
+        self.assertIsNotNone(palette)
 
     def test_missing_qt_dialog_dependency_is_a_clear_error(self) -> None:
         controller = FakeController()

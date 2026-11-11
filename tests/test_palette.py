@@ -106,6 +106,8 @@ class _EventType(IntFlag):
     KeyPress = 2
     FocusOut = 3
     WindowDeactivate = 4
+    FocusIn = 5
+    WindowTitleChange = 6
 
 
 class _Qt:
@@ -448,6 +450,12 @@ class _Widget:
 class _Frame(_Widget):
     class Shape:
         NoFrame = 0
+
+    def setWindowTitle(self, title: str) -> None:  # noqa: N802
+        super().setWindowTitle(title)
+        # Real PySide6 delivers a synchronous WindowTitleChange changeEvent
+        # from inside SearchPalette.__init__, before its attributes exist.
+        self.changeEvent(_Event(_EventType.WindowTitleChange))
 
 
 class _Label(_Widget):
@@ -945,6 +953,16 @@ class FakeQtPaletteTests(unittest.TestCase):
         return None
 
     # ------------------------------------------------------------- rendering
+
+    def test_init_survives_synchronous_change_event_from_set_window_title(self) -> None:
+        palette = self.Palette(self.controller, None)
+        self.palette = palette
+
+        self.assertFalse(palette._disposed)
+        self.assertFalse(palette._open)
+        self.assertIs(palette.input_widget(), palette._input)
+        self.assertEqual(palette._title, palette_model.WINDOW_TITLE)
+        self.assertEqual(self.controller.count("set_pre_dispatch"), 1)
 
     def test_show_at_focuses_real_line_edit_and_never_duplicates(self) -> None:
         palette = self.make()

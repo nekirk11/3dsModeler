@@ -126,8 +126,10 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
         activated = qtcore.Signal(str, bool)
 
         def __init__(self, context: str, label: str, parent: Any = None) -> None:
-            super().__init__(label, parent)
+            # Qt can deliver change/focus events synchronously while the base
+            # class initializes, so every plain attribute exists first.
             self._context = str(context)
+            super().__init__(label, parent)
             self.setObjectName(PILL_OBJECT)
             self.setFocusPolicy(qtcore.Qt.FocusPolicy.NoFocus)
             self.setCheckable(True)
@@ -153,8 +155,9 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
         activated = qtcore.Signal(str)
 
         def __init__(self, row_id: str, parent: Any = None) -> None:
-            super().__init__(parent)
+            # See _ContextPill: attributes must precede base-class init.
             self._row_id = str(row_id)
+            super().__init__(parent)
             self.setObjectName(ROW_OBJECT)
             self.setFocusPolicy(qtcore.Qt.FocusPolicy.NoFocus)
             self.setProperty("highlighted", False)
@@ -174,22 +177,10 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
         """One shared, reusable palette window over a palette controller."""
 
         def __init__(self, controller: Any, parent: Any = None) -> None:
-            super().__init__(parent)
-            self.setObjectName(PALETTE_OBJECT)
-            self.setWindowTitle(WINDOW_TITLE)
-            self.setWindowFlags(
-                qtcore.Qt.WindowType.Popup
-                | qtcore.Qt.WindowType.FramelessWindowHint
-                | qtcore.Qt.WindowType.NoDropShadowWindowHint
-            )
-            self.setAttribute(qtcore.Qt.WidgetAttribute.WA_DeleteOnClose, False)
-            # The real line edit owns all keyboard focus; a click on the frame
-            # background must not steal it from the text field.
-            self.setFocusPolicy(qtcore.Qt.FocusPolicy.NoFocus)
-            self.setFixedWidth(460)
-            self.setMaximumHeight(560)
-            self.setStyleSheet(stylesheet())
-
+            # Real PySide6 fires changeEvent() synchronously from setWindowTitle
+            # before this method finishes, so every instance attribute must be
+            # initialized *before* the QFrame base class is constructed and
+            # before any self.set* call.
             self._controller = controller
             self._view: Any = None
             self._rows: tuple[Any, ...] = ()
@@ -209,9 +200,26 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             self._last_error = ""
             self._activation_key: Any = None
             self._activation_at = 0.0
+            self._input_had_focus = False
             self._clock = time.monotonic
-
             self._dispatch_hook = self._prepare_dispatch
+
+            super().__init__(parent)
+            self.setObjectName(PALETTE_OBJECT)
+            self.setWindowTitle(WINDOW_TITLE)
+            self.setWindowFlags(
+                qtcore.Qt.WindowType.Popup
+                | qtcore.Qt.WindowType.FramelessWindowHint
+                | qtcore.Qt.WindowType.NoDropShadowWindowHint
+            )
+            self.setAttribute(qtcore.Qt.WidgetAttribute.WA_DeleteOnClose, False)
+            # The real line edit owns all keyboard focus; a click on the frame
+            # background must not steal it from the text field.
+            self.setFocusPolicy(qtcore.Qt.FocusPolicy.NoFocus)
+            self.setFixedWidth(460)
+            self.setMaximumHeight(560)
+            self.setStyleSheet(stylesheet())
+
             setter = getattr(controller, "set_pre_dispatch", None)
             if callable(setter):
                 setter(self._dispatch_hook)
@@ -317,6 +325,11 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
 
         # --------------------------------------------------------- public API
 
+        def input_widget(self) -> Any:
+            """Return the real line edit that owns keyboard focus."""
+
+            return self._input
+
         def show_at(self, global_pos: Any = None, *, return_focus: Any = None) -> Any:
             """Open/raise the one palette and focus its real line edit."""
 
@@ -362,6 +375,10 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             self._render(view)
             self._position_near(global_pos, app)
             self._install_filter(app)
+            # Windows emits transient Popup activation changes during show();
+            # only treat a deactivate/focus-out as a close once the input has
+            # actually held focus.
+            self._input_had_focus = False
             self.show()
             self.raise_()
             self.activateWindow()
@@ -593,7 +610,11 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
         # ------------------------------------------------------------ events
 
         def eventFilter(self, watched: Any, event: Any) -> bool:  # noqa: N802
-            if self._disposed or not self._open or not self.isVisible():
+            if (
+                getattr(self, "_disposed", True)
+                or not getattr(self, "_open", False)
+                or not self.isVisible()
+            ):
                 return False
             if not self._owns_widget(watched):
                 return False
@@ -610,8 +631,13 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
                 return False
             if event_type == qtcore.QEvent.Type.KeyPress:
                 return self._handle_key_intent(_event_intent(qtcore, event))
+            if event_type == qtcore.QEvent.Type.FocusIn:
+                if watched is self._input:
+                    self._input_had_focus = True
+                return False
             if event_type == qtcore.QEvent.Type.FocusOut:
-                self._schedule_focus_check()
+                if getattr(self, "_input_had_focus", False):
+                    self._schedule_focus_check()
                 return False
             return False
 
@@ -658,10 +684,13 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             return True
 
         def changeEvent(self, event: Any) -> None:  # noqa: N802 - Qt signature
-            if not self._disposed and self._open:
+            if not getattr(self, "_disposed", True) and getattr(
+                self, "_open", False
+            ):
                 try:
                     if event.type() == qtcore.QEvent.Type.WindowDeactivate:
-                        self._schedule_focus_check()
+                        if getattr(self, "_input_had_focus", False):
+                            self._schedule_focus_check()
                 except Exception:
                     pass
             super().changeEvent(event)
@@ -670,7 +699,11 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             # An outside click on a Qt.Popup hides the window without a matching
             # controller call; treat that like an external focus loss, but never
             # for the palette's own hide-before-dispatch/close paths.
-            if not self._disposed and self._open and self._suppress_hide == 0:
+            if (
+                not getattr(self, "_disposed", True)
+                and getattr(self, "_open", False)
+                and getattr(self, "_suppress_hide", 0) == 0
+            ):
                 self._schedule_focus_check()
             super().hideEvent(event)
 
@@ -872,6 +905,8 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             try:
                 if self._input.isVisible():
                     self._input.setFocus(qtcore.Qt.FocusReason.OtherFocusReason)
+                    if self._input.hasFocus():
+                        self._input_had_focus = True
             except RuntimeError:
                 return
 

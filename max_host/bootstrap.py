@@ -252,6 +252,23 @@ def _set_palette_controller(controller: Any = None) -> Any:
     return controller
 
 
+def _disable_max_accelerators(palette: Any) -> None:
+    """Keep 3ds Max's Win32 shortcuts from stealing search-field typing."""
+
+    try:
+        import qtmax  # type: ignore[import-not-found]
+    except Exception:
+        return
+    disable = getattr(qtmax, "DisableMaxAcceleratorsOnFocus", None)
+    if not callable(disable):
+        return
+    try:
+        disable(palette.input_widget(), True)
+    except Exception:
+        # Accelerator lockout is best-effort; never fail palette construction.
+        pass
+
+
 def _palette_for(controller: Any) -> Any:
     global _palette
 
@@ -266,6 +283,7 @@ def _palette_for(controller: Any) -> Any:
 
     SearchPalette = _import_palette()
     palette = SearchPalette(controller, _max_main_window())
+    _disable_max_accelerators(palette)
     _palette = palette
     return palette
 
@@ -559,6 +577,8 @@ def show_palette(controller: Any = None) -> Any:
     A supplied controller must implement the V2 :class:`PaletteController`
     seam.  It is caller-owned and is not disposed by :func:`uninstall`.
     """
+
+    global _palette_controller, _owns_palette_controller
 
     _assert_main_thread()
     _qt_application()
