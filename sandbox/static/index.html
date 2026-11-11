@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="sandbox-token" content="__SANDBOX_TOKEN__">
+  <meta name="color-scheme" content="dark">
+  <title>Context Menu Lab — Max 2025 prototype</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">CM</span>
+        <div>
+          <h1>Context Menu Lab</h1>
+          <p>Max 2025 interaction prototype · shared Python controller</p>
+        </div>
+      </div>
+      <div class="topbar-meta">
+        <span class="badge badge-sim" title="Every host response in this page is deterministic simulation.">SIMULATED</span>
+        <span id="connection" class="badge badge-wait" role="status">connecting</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel stage-panel" aria-labelledby="stage-title">
+        <div class="panel-head">
+          <h2 id="stage-title">Simulated viewport</h2>
+          <span id="scenario-label" class="panel-note">no scene bound</span>
+        </div>
+
+        <div id="viewport" class="viewport" tabindex="0"
+             aria-label="Simulated viewport. Press Space to tap, or press and hold the primary pointer to open the menu.">
+          <canvas id="viewport-canvas" aria-hidden="true"></canvas>
+          <div id="neutral-zone" class="neutral-zone" hidden aria-hidden="true"></div>
+          <div id="menu-layer" class="menu-layer"></div>
+
+          <div class="viewport-hud" aria-hidden="true">
+            <span class="hud-chip hud-scene">SIMULATED VIEWPORT</span>
+            <span id="hud-context" class="hud-chip hud-context">no context</span>
+            <span id="hud-phase" class="hud-chip hud-phase">closed</span>
+          </div>
+
+          <div class="focus-tag" aria-hidden="true">VIEWPORT FOCUS</div>
+
+          <div class="viewport-empty" id="viewport-empty">
+            <strong>Click here, then press <kbd>Space</kbd>.</strong>
+            <span>Or press and hold the primary mouse button anywhere in this area.</span>
+          </div>
+        </div>
+
+        <div class="gesture-strip">
+          <p class="gesture-copy">
+            <strong>Tap</strong> <kbd>Space</kbd> or press/release quickly to latch the menu:
+            releasing before the hold threshold never launches; click a row or press Enter.
+            <strong>Hold</strong> and move onto a row, then release to commit.
+            Release in the centre circle to cancel.
+          </p>
+          <div class="guided" role="group" aria-label="Guided gesture alternatives">
+            <button type="button" class="btn btn-quiet" data-guide="tap">Tap gesture</button>
+            <button type="button" class="btn btn-quiet" data-guide="hold-neutral">Hold → neutral release</button>
+            <button type="button" class="btn btn-quiet" data-guide="latched">Open latched</button>
+            <button type="button" class="btn btn-quiet" data-guide="disabled">Try unavailable row</button>
+            <button type="button" class="btn btn-quiet" data-guide="break-context">Change context while open</button>
+            <button type="button" class="btn btn-quiet" data-guide="repeat">Repeat last</button>
+            <button type="button" class="btn btn-quiet" data-guide="escape">Escape</button>
+          </div>
+          <div class="scenario-controls">
+            <label class="field field-grow">
+              <span>Simulated scenario</span>
+              <select id="scenario-select" aria-label="Simulated host scenario"></select>
+            </label>
+            <div class="context-buttons" id="context-buttons" role="group" aria-label="Jump to context scenario"></div>
+          </div>
+        </div>
+
+        <p class="honesty-note">
+          No geometry, selection, modifier stack, or native command is read or changed here.
+          Outcomes come from the deterministic <code>SimulatedHost</code>.
+        </p>
+      </section>
+
+      <aside class="side-column">
+        <section class="panel state-panel" aria-labelledby="state-title">
+          <div class="panel-head">
+            <h2 id="state-title">Menu state</h2>
+            <span class="panel-note">rendered from <code>MenuView</code></span>
+          </div>
+          <dl class="state-grid">
+            <div><dt>Context</dt><dd id="state-context">—</dd></div>
+            <div><dt>Phase</dt><dd id="state-phase">closed</dd></div>
+            <div><dt>Session</dt><dd id="state-session" class="mono">—</dd></div>
+            <div><dt>Sequence</dt><dd id="state-sequence" class="mono">0</dd></div>
+            <div><dt>Query</dt><dd id="state-query" class="mono">—</dd></div>
+            <div><dt>Highlighted</dt><dd id="state-highlighted" class="mono">—</dd></div>
+            <div><dt>Armed</dt><dd id="state-armed" class="mono">—</dd></div>
+            <div><dt>Status</dt><dd id="state-status">—</dd></div>
+          </dl>
+          <div class="capability-block">
+            <h3>Target snapshot</h3>
+            <dl class="state-grid state-grid-small">
+              <div><dt>Kind</dt><dd id="snap-kind" class="mono">—</dd></div>
+              <div><dt>Level</dt><dd id="snap-level" class="mono">—</dd></div>
+              <div><dt>Selected</dt><dd id="snap-count" class="mono">—</dd></div>
+              <div><dt>Panel ready</dt><dd id="snap-panel" class="mono">—</dd></div>
+              <div><dt>Conflict</dt><dd id="snap-conflict" class="mono">—</dd></div>
+              <div><dt>Revision</dt><dd id="snap-revision" class="mono">—</dd></div>
+            </dl>
+            <p id="last-result" class="last-result">No launch yet.</p>
+          </div>
+        </section>
+
+        <section class="panel log-panel" aria-labelledby="log-title">
+          <div class="panel-head">
+            <h2 id="log-title">Action log</h2>
+            <span class="panel-note">bounded · newest first</span>
+          </div>
+          <ol id="action-log" class="log-list" aria-live="polite"></ol>
+        </section>
+      </aside>
+    </main>
+
+    <section class="panel profile-panel" aria-labelledby="profile-title">
+      <div class="panel-head">
+        <h2 id="profile-title">Profile editor</h2>
+        <span class="panel-note">in-memory · explicit export only</span>
+      </div>
+
+      <div class="profile-toolbar">
+        <label class="field">
+          <span>Tap threshold (ms)</span>
+          <input id="tap-ms" type="number" min="100" max="600" step="10" value="220">
+        </label>
+        <label class="field">
+          <span>Neutral radius (px)</span>
+          <input id="neutral-px" type="number" min="4" max="48" step="1" value="12">
+        </label>
+        <label class="field field-grow">
+          <span>Context</span>
+          <select id="profile-context"></select>
+        </label>
+        <div class="profile-actions">
+          <button type="button" id="profile-apply" class="btn btn-primary">Apply in memory</button>
+          <button type="button" id="profile-reset" class="btn">Reset default</button>
+          <button type="button" id="profile-export" class="btn">Export JSON</button>
+          <button type="button" id="profile-copy" class="btn">Copy</button>
+        </div>
+      </div>
+
+      <div class="profile-body">
+        <div class="profile-list-wrap">
+          <p class="profile-help">Stable order is the profile order. Hidden actions keep their position. Unavailable actions stay visible with a reason.</p>
+          <ol id="profile-list" class="profile-list"></ol>
+          <p id="profile-message" class="profile-message" role="status"></p>
+        </div>
+        <div class="profile-io">
+          <textarea id="profile-json" class="profile-json mono" spellcheck="false" aria-label="Profile JSON import and export"></textarea>
+          <div class="profile-actions">
+            <button type="button" id="profile-import" class="btn">Import pasted JSON</button>
+            <button type="button" id="profile-download" class="btn">Download JSON</button>
+          </div>
+          <p class="profile-help">Malformed imports leave the active profile untouched. Schema version, six contexts, bounds, and known action IDs are validated by the Python controller.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>Experimental prototype. Not a Houdini port, not Max-validated.</span>
+      <span class="mono">python3 -m max2025_menu_prototype.sandbox</span>
+    </footer>
+  </div>
+
+  <div id="toast" class="toast" role="alert" hidden></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
