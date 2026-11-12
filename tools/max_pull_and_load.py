@@ -144,7 +144,13 @@ MACRO_FILE_HEADER = (
     "-- 3dsModeler macro definitions (managed by the 3dsModeler launcher; "
     "do not edit)\n"
 )
-LOCAL_ACTIONS = ("search", "object", "vertex", "edge", "border", "face", "element")
+STARTUP_FILE_NAME = "3dsModeler_startup.ms"
+STARTUP_FILE_HEADER = (
+    "-- 3dsModeler startup hotkey (managed by the 3dsModeler launcher; "
+    "do not edit)\n"
+)
+LOCAL_CONTEXTS = ("object", "vertex", "edge", "border", "face", "element")
+LOCAL_ACTIONS = ("search", "install_hotkey", *LOCAL_CONTEXTS)
 
 RESTART_MESSAGE = "Checkout updated; restart 3ds Max before loading this commit."
 PARTIAL_IMPORT_MESSAGE = (
@@ -224,6 +230,19 @@ MACRO_WRITE_MESSAGE = (
 )
 MACRO_DIR_MESSAGE = (
     "The Max user MacroScripts folder could not be resolved. Run "
+    "max_pull_and_load.ms inside 3ds Max 2025, then retry."
+)
+STARTUP_CONFLICT_MESSAGE = (
+    "A file named 3dsModeler_startup.ms already exists in the Max startup "
+    "folder and was not created by this launcher. Move or rename it outside "
+    "Max, then run max_pull_and_load.ms again."
+)
+STARTUP_WRITE_MESSAGE = (
+    "The 3dsModeler startup script could not be written. Check that the Max "
+    "user startup folder is writable, then run max_pull_and_load.ms again."
+)
+STARTUP_DIR_MESSAGE = (
+    "The Max user startup folder could not be resolved. Run "
     "max_pull_and_load.ms inside 3ds Max 2025, then retry."
 )
 LISTENER_TIP = (
@@ -1349,6 +1368,18 @@ def _show_palette_checked(bootstrap: Any) -> None:
         raise
 
 
+def _ensure_hotkey_checked(bootstrap: Any) -> None:
+    """Install the default Tab listener on update completion; never fatal."""
+
+    ensure = getattr(bootstrap, "ensure_hotkey", None)
+    if not callable(ensure):
+        return
+    try:
+        ensure()
+    except Exception:
+        pass
+
+
 #: Backward-compatible private alias for callers/tests from the V1 launcher.
 _show_tools_checked = _show_palette_checked
 
@@ -1393,6 +1424,7 @@ def _on_git_finished(result: dict[str, Any], checkout: Path) -> None:
         if bootstrap is None:
             _enter_restart_required(session, STALE_IMPORT_MESSAGE)
             raise LauncherError(STALE_IMPORT_MESSAGE, "stale_import")
+        _ensure_hotkey_checked(bootstrap)
         _show_palette_checked(bootstrap)
         _emit("Loaded commit %s." % sha)
         _emit_listener_tip()
@@ -1415,6 +1447,7 @@ def _on_git_finished(result: dict[str, Any], checkout: Path) -> None:
     if bootstrap is None:
         _enter_restart_required(session, STALE_IMPORT_MESSAGE)
         raise LauncherError(STALE_IMPORT_MESSAGE, "stale_import")
+    _ensure_hotkey_checked(bootstrap)
     _show_palette_checked(bootstrap)
     _emit("Loaded commit %s from %s." % (sha, Path(package.__file__).parent))
     _emit_listener_tip()
@@ -1492,7 +1525,8 @@ def _validate_local_action(value: Any) -> str:
     text = getattr(value, "value", value)
     if not isinstance(text, str) or text not in LOCAL_ACTIONS:
         raise LauncherError(
-            "Unknown local action; use search or a public V2 context.",
+            "Unknown local action; use search, install_hotkey or a public V2 "
+            "context.",
             "invalid_action",
         )
     return text
@@ -1502,7 +1536,7 @@ def _validate_local_context(value: Any) -> Optional[str]:
     if value is None:
         return None
     text = getattr(value, "value", value)
-    if not isinstance(text, str) or text not in LOCAL_ACTIONS[1:]:
+    if not isinstance(text, str) or text not in LOCAL_CONTEXTS:
         raise LauncherError(
             "Unknown V2 context; use object, vertex, edge, border, face or element.",
             "invalid_context",
@@ -1540,6 +1574,12 @@ def invoke_local(
         if selected_context is not None:
             raise LauncherError(
                 "The search action does not accept a context.", "invalid_context"
+            )
+    elif local_action == "install_hotkey":
+        if selected_context is not None:
+            raise LauncherError(
+                "The install_hotkey action does not accept a context.",
+                "invalid_context",
             )
     else:
         if selected_context is not None and selected_context != local_action:
@@ -1595,6 +1635,23 @@ def invoke_local(
         _enter_restart_required(session, STALE_IMPORT_MESSAGE)
         raise LauncherError(STALE_IMPORT_MESSAGE, "stale_import")
 
+    ensure = getattr(bootstrap, "ensure_hotkey", None)
+    installed = None
+    if callable(ensure):
+        try:
+            installed = ensure()
+        except Exception:
+            installed = None
+    if local_action == "install_hotkey":
+        installer = getattr(bootstrap, "install_tab_hotkey", None)
+        if not callable(installer):
+            raise LauncherError(
+                "The loaded 3dsModeler package cannot install the Tab hotkey. "
+                "Restart 3ds Max and retry.",
+                "install_hotkey",
+            )
+        return installer()
+
     if local_action == "search":
         return bootstrap.show_palette()
     return bootstrap.switch_context(
@@ -1620,6 +1677,76 @@ def _default_user_macros_dir() -> Optional[Path]:
     if not text or text.lower() in ("undefined", "none", "null"):
         return None
     return Path(text)
+
+
+def _default_user_startup_dir() -> Optional[Path]:
+    """Resolve Max's documented user startup-script directory lazily."""
+
+    try:
+        from pymxs import runtime as rt  # type: ignore[import-not-found]
+
+        value = rt.execute("getDir #userStartupScripts")
+    except Exception:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in ("undefined", "none", "null"):
+        return None
+    return Path(text)
+
+
+def _write_owned_file(
+    directory: Path,
+    name: str,
+    data: str,
+    header: str,
+    conflict_message: str,
+    write_message: str,
+) -> Path:
+    """Atomically write one managed file without ever overwriting a foreign one."""
+
+    import os
+    import tempfile
+
+    if directory.exists() and not directory.is_dir():
+        raise LauncherError(write_message, "macro_write")
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise LauncherError(write_message, "macro_write") from exc
+
+    path = directory / name
+    if path.exists():
+        try:
+            existing = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise LauncherError(write_message, "macro_write") from exc
+        if not existing.startswith(header):
+            raise LauncherError(conflict_message, "macro_conflict")
+        if existing == data:
+            return path
+    temporary = None
+    try:
+        handle = tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            newline="\n",
+            dir=str(directory),
+            prefix=".3dsModeler-",
+            suffix=".tmp",
+            delete=False,
+        )
+        temporary = Path(handle.name)
+        with handle:
+            handle.write(data)
+        os.replace(str(temporary), str(path))
+    except OSError as exc:
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+        raise LauncherError(write_message, "macro_write") from exc
+    return path
 
 
 def _local_loader_source(
@@ -2037,6 +2164,32 @@ def render_macro_source(*, checkout: Path = DEFAULT_CHECKOUT) -> str:
     return "\n".join(lines)
 
 
+def render_startup_source(*, checkout: Path = DEFAULT_CHECKOUT) -> str:
+    """Render the owned Max startup script that registers the Tab listener.
+
+    The script is local-only: it validates/loads the existing checkout and
+    calls ``invoke_local(action="install_hotkey")``.  It opens no window, makes
+    no network request, and is never loaded by ``uninstall()``.
+    """
+
+    import base64 as _base64
+
+    body = _local_loader_source(
+        action="install_hotkey",
+        context=None,
+        convert_selection=False,
+        checkout=checkout,
+    )
+    encoded = _base64.b64encode(body.encode("utf-8")).decode("ascii")
+    return (
+        STARTUP_FILE_HEADER
+        + "-- Registers the default Tab hotkey for this Max session.\n"
+        + "python.execute (\"import base64; exec(compile("
+        + "base64.b64decode('%s'), '<3dsModeler-startup>', 'exec'))\")\n"
+        % encoded
+    )
+
+
 def _activate_macros(path: Path, directory: Path) -> bool:
     """Register a freshly written ``.mcr`` in the live Max session.
 
@@ -2074,54 +2227,32 @@ def register_macros(
     UI lifetime; ``uninstall`` never removes the resulting definitions.
     """
 
-    import os
-    import tempfile
-
     directory = Path(target_dir) if target_dir is not None else _default_user_macros_dir()
     if directory is None:
         raise LauncherError(MACRO_DIR_MESSAGE, "macro_dir")
-    if directory.exists() and not directory.is_dir():
-        raise LauncherError(MACRO_WRITE_MESSAGE, "macro_write")
-    try:
-        directory.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise LauncherError(MACRO_WRITE_MESSAGE, "macro_write") from exc
 
-    path = directory / MACRO_FILE_NAME
     data = render_macro_source(checkout=checkout)
-    if path.exists():
-        try:
-            existing = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise LauncherError(MACRO_WRITE_MESSAGE, "macro_write") from exc
-        if not existing.startswith(MACRO_FILE_HEADER):
-            raise LauncherError(MACRO_CONFLICT_MESSAGE, "macro_conflict")
-        if existing == data:
-            _activate_macros(path, directory)
-            return path
-    temporary = None
-    try:
-        handle = tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            newline="\n",
-            dir=str(directory),
-            prefix=".3dsModeler-",
-            suffix=".tmp",
-            delete=False,
-        )
-        temporary = Path(handle.name)
-        with handle:
-            handle.write(data)
-        os.replace(str(temporary), str(path))
-    except OSError as exc:
-        if temporary is not None:
-            try:
-                temporary.unlink()
-            except OSError:
-                pass
-        raise LauncherError(MACRO_WRITE_MESSAGE, "macro_write") from exc
+    path = _write_owned_file(
+        directory,
+        MACRO_FILE_NAME,
+        data,
+        MACRO_FILE_HEADER,
+        MACRO_CONFLICT_MESSAGE,
+        MACRO_WRITE_MESSAGE,
+    )
     _activate_macros(path, directory)
+
+    startup_directory = _default_user_startup_dir()
+    if startup_directory is not None:
+        startup_data = render_startup_source(checkout=checkout)
+        _write_owned_file(
+            startup_directory,
+            STARTUP_FILE_NAME,
+            startup_data,
+            STARTUP_FILE_HEADER,
+            STARTUP_CONFLICT_MESSAGE,
+            STARTUP_WRITE_MESSAGE,
+        )
     return path
 
 
@@ -2151,9 +2282,15 @@ SESSION_SCHEMA_VERSION = 1
 LOCAL_GIT_TIMEOUT = 15.0
 NETWORK_GIT_TIMEOUT = 120.0
 MAX_MACROS_SOURCE_B64 = "__MACRO_SOURCE_B64__"
+STARTUP_SOURCE_B64 = "__STARTUP_SOURCE_B64__"
 MACRO_FILE_NAME = "3dsModeler.mcr"
 MACRO_FILE_HEADER = (
     "-- 3dsModeler macro definitions (managed by the 3dsModeler launcher; "
+    "do not edit)\n"
+)
+STARTUP_FILE_NAME = "3dsModeler_startup.ms"
+STARTUP_FILE_HEADER = (
+    "-- 3dsModeler startup hotkey (managed by the 3dsModeler launcher; "
     "do not edit)\n"
 )
 _KILL_WAIT = 5.0
@@ -2197,6 +2334,19 @@ MACRO_WRITE_MESSAGE = (
 )
 MACRO_DIR_MESSAGE = (
     "The Max user MacroScripts folder could not be resolved. Run "
+    "max_pull_and_load.ms inside 3ds Max 2025, then retry."
+)
+STARTUP_CONFLICT_MESSAGE = (
+    "A file named 3dsModeler_startup.ms already exists in the Max startup "
+    "folder and was not created by this launcher. Move or rename it outside "
+    "Max, then run max_pull_and_load.ms again."
+)
+STARTUP_WRITE_MESSAGE = (
+    "The 3dsModeler startup script could not be written. Check that the Max "
+    "user startup folder is writable, then run max_pull_and_load.ms again."
+)
+STARTUP_DIR_MESSAGE = (
+    "The Max user startup folder could not be resolved. Run "
     "max_pull_and_load.ms inside 3ds Max 2025, then retry."
 )
 
@@ -2262,6 +2412,17 @@ def _user_macros_directory():
     return Path(value)
 
 
+def _user_startup_directory():
+    try:
+        from pymxs import runtime as rt
+        value = str(rt.execute("getDir #userStartupScripts")).strip()
+    except Exception:
+        return None
+    if not value or value.lower() in ("undefined", "none", "null"):
+        return None
+    return Path(value)
+
+
 def _activate_macros(path, directory):
     """Register the written MacroScripts in the live Max session if possible."""
 
@@ -2304,15 +2465,48 @@ def _install_macros():
                 return False
             if existing == data:
                 _activate_macros(path, directory)
+                _install_startup()
                 return True
         directory.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(".3dsModeler-macros.tmp")
         temporary.write_text(data, encoding="utf-8", newline="\n")
         os.replace(str(temporary), str(path))
         _activate_macros(path, directory)
+        _install_startup()
         return True
     except OSError:
         _emit(MACRO_WRITE_MESSAGE)
+        return False
+
+
+def _install_startup():
+    """Write the owned startup Tab listener without activating it now."""
+
+    directory = _user_startup_directory()
+    if directory is None:
+        _emit(STARTUP_DIR_MESSAGE)
+        return False
+    try:
+        data = zlib.decompress(base64.b64decode(STARTUP_SOURCE_B64)).decode("utf-8")
+    except Exception:
+        _emit(STARTUP_WRITE_MESSAGE)
+        return False
+    path = directory / STARTUP_FILE_NAME
+    try:
+        if path.exists():
+            existing = path.read_text(encoding="utf-8")
+            if not existing.startswith(STARTUP_FILE_HEADER):
+                _emit(STARTUP_CONFLICT_MESSAGE)
+                return False
+            if existing == data:
+                return True
+        directory.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(".3dsModeler-startup.tmp")
+        temporary.write_text(data, encoding="utf-8", newline="\n")
+        os.replace(str(temporary), str(path))
+        return True
+    except OSError:
+        _emit(STARTUP_WRITE_MESSAGE)
         return False
 
 
@@ -3024,7 +3218,13 @@ def _embedded_python_source(*, checkout: Path = DEFAULT_CHECKOUT) -> str:
     macros = base64.b64encode(
         zlib.compress(render_macro_source(checkout=checkout).encode("utf-8"), 9)
     ).decode("ascii")
-    return _EMBEDDED_PYTHON_TEMPLATE.replace("__MACRO_SOURCE_B64__", macros)
+    startup = base64.b64encode(
+        zlib.compress(render_startup_source(checkout=checkout).encode("utf-8"), 9)
+    ).decode("ascii")
+    return (
+        _EMBEDDED_PYTHON_TEMPLATE.replace("__MACRO_SOURCE_B64__", macros)
+        .replace("__STARTUP_SOURCE_B64__", startup)
+    )
 
 
 EMBEDDED_PYTHON = _embedded_python_source()

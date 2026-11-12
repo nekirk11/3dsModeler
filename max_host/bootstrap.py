@@ -48,6 +48,12 @@ _palette_controller: Any = None
 _palette_host: Any = None
 _owns_palette_controller: bool = False
 
+# Palette-coupled Win32 accelerator guard and the default Tab hotkey listener.
+_ACCELERATOR_UNSET = object()
+_accelerator_saved: Any = _ACCELERATOR_UNSET
+_tab_hotkey_filter: Any = None
+_tab_hotkey_hosts: list[Any] = []
+
 
 # --------------------------------------------------------------------- imports
 
@@ -91,6 +97,240 @@ def _max_main_window() -> Optional[Any]:
         return qtmax.GetQMaxMainWindow()
     except Exception:
         return None
+
+
+# ------------------------------------------------------- Win32 keyboard bridge
+
+
+def set_accelerator_guard(active: bool) -> None:
+    """Latch/restore Max's Win32 accelerator state around palette focus.
+
+    ``rt.enableAccelerators`` must be off while the Qt search field owns the
+    keyboard (otherwise Max's native W/E/R/X/T/C viewport shortcuts swallow
+    typing), and restored before any native caddy/mode starts.  The previous
+    value is saved once and restored exactly once, so nesting is harmless.
+    """
+
+    global _accelerator_saved
+
+    try:
+        from pymxs import runtime as rt  # type: ignore[import-not-found]
+    except Exception:
+        return
+
+    if active:
+        if _accelerator_saved is not _ACCELERATOR_UNSET:
+            return
+        try:
+            previous = bool(getattr(rt, "enableAccelerators", True))
+        except Exception:
+            return
+        try:
+            rt.enableAccelerators = False
+        except Exception:
+            return
+        _accelerator_saved = previous
+        return
+
+    if _accelerator_saved is _ACCELERATOR_UNSET:
+        return
+    previous = _accelerator_saved
+    _accelerator_saved = _ACCELERATOR_UNSET
+    try:
+        rt.enableAccelerators = previous
+    except Exception:
+        pass
+
+
+def _palette_opened() -> None:
+    set_accelerator_guard(True)
+
+
+def _palette_closed() -> None:
+    set_accelerator_guard(False)
+
+
+def _open_palette_from_tab() -> None:
+    """Open the palette from the Tab listener and swallow the opening Tab."""
+
+    palette = show_palette()
+    suppressor = getattr(palette, "suppress_next_tab", None)
+    if callable(suppressor):
+        try:
+            suppressor()
+        except Exception:
+            pass
+
+
+def _tab_hotkey_eligible(qt_widgets: Any) -> bool:
+    """True only when a viewport-like widget owns focus and no UI is modal."""
+
+    try:
+        if _palette_is_open():
+            return False
+    except Exception:
+        return False
+
+    application = qt_widgets.QApplication.instance()
+    if application is None:
+        return False
+    for name in ("activeModalWidget", "activePopupWidget"):
+        getter = getattr(application, name, None)
+        if not callable(getter):
+            continue
+        try:
+            if getter() is not None:
+                return False
+        except Exception:
+            return False
+
+    getter = getattr(application, "activeWindow", None)
+    if callable(getter):
+        try:
+            active_window = getter()
+        except Exception:
+            active_window = None
+        if active_window is not None:
+            try:
+                main_window = _max_main_window()
+            except Exception:
+                main_window = None
+            if main_window is not None and active_window is not main_window:
+                # Modeless secondary windows (Scripting Listener, Slate
+                # Material Editor) keep normal Tab traversal.
+                return False
+
+    getter = getattr(application, "focusWidget", None)
+    focus = None
+    if callable(getter):
+        try:
+            focus = getter()
+        except Exception:
+            focus = None
+    if focus is None:
+        return True
+
+    for name in (
+        "QLineEdit",
+        "QTextEdit",
+        "QPlainTextEdit",
+        "QAbstractSpinBox",
+        "QAbstractItemView",
+        "QComboBox",
+    ):
+        widget_type = getattr(qt_widgets, name, None)
+        if not isinstance(widget_type, type):
+            continue
+        try:
+            if isinstance(focus, widget_type):
+                return False
+        except TypeError:
+            continue
+    return True
+
+
+def _tab_hotkey_class(qt_core: Any, qt_widgets: Any) -> type:
+    """Build the one QObject event filter used by the default Tab hotkey."""
+
+    blocked_modifiers = (
+        qt_core.Qt.KeyboardModifier.ControlModifier
+        | qt_core.Qt.KeyboardModifier.AltModifier
+        | qt_core.Qt.KeyboardModifier.ShiftModifier
+        | getattr(qt_core.Qt.KeyboardModifier, "MetaModifier", 0)
+    )
+    tab_key = getattr(qt_core.Qt.Key, "Key_Tab", None)
+
+    class _TabHotkeyFilter(qt_core.QObject):
+        def eventFilter(self, watched: Any, event: Any) -> bool:  # noqa: N802
+            try:
+                event_type = event.type()
+                is_override = (
+                    event_type == qt_core.QEvent.Type.ShortcutOverride
+                )
+                if not is_override and event_type != qt_core.QEvent.Type.KeyPress:
+                    return False
+                if tab_key is None or event.key() != tab_key:
+                    return False
+                if bool(event.modifiers() & blocked_modifiers):
+                    return False
+                if bool(event.isAutoRepeat()):
+                    return False
+                if not _tab_hotkey_eligible(qt_widgets):
+                    return False
+                event.accept()
+                if is_override:
+                    return True
+                _open_palette_from_tab()
+                return True
+            except Exception:
+                return False
+
+    return _TabHotkeyFilter
+
+
+def install_tab_hotkey() -> Any:
+    """Install the idempotent default Tab listener on Max's Qt application."""
+
+    global _tab_hotkey_filter, _tab_hotkey_hosts
+
+    if _tab_hotkey_filter is not None:
+        return _tab_hotkey_filter
+    try:
+        qt_core, _qt_gui, qt_widgets = _qt_parts()
+    except Exception:
+        return None
+    application = qt_widgets.QApplication.instance()
+    if application is None:
+        return None
+    installer = getattr(application, "installEventFilter", None)
+    if not callable(installer):
+        return None
+    try:
+        event_filter = _tab_hotkey_class(qt_core, qt_widgets)()
+        installer(event_filter)
+    except Exception:
+        return None
+
+    hosts = [application]
+    main_window = _max_main_window()
+    main_installer = getattr(main_window, "installEventFilter", None)
+    if callable(main_installer) and main_window is not application:
+        try:
+            main_installer(event_filter)
+            hosts.append(main_window)
+        except Exception:
+            pass
+    _tab_hotkey_filter = event_filter
+    _tab_hotkey_hosts = hosts
+    return event_filter
+
+
+def ensure_hotkey() -> Any:
+    """Best-effort Tab listener install; never breaks a launch."""
+
+    try:
+        return install_tab_hotkey()
+    except Exception:
+        return None
+
+
+def _remove_tab_hotkey() -> None:
+    global _tab_hotkey_filter, _tab_hotkey_hosts
+
+    event_filter = _tab_hotkey_filter
+    hosts = _tab_hotkey_hosts
+    _tab_hotkey_filter = None
+    _tab_hotkey_hosts = []
+    if event_filter is None:
+        return
+    for host in hosts:
+        remover = getattr(host, "removeEventFilter", None)
+        if not callable(remover):
+            continue
+        try:
+            remover(event_filter)
+        except Exception:
+            pass
 
 
 def _import_popup() -> Any:
@@ -284,6 +524,12 @@ def _palette_for(controller: Any) -> Any:
     SearchPalette = _import_palette()
     palette = SearchPalette(controller, _max_main_window())
     _disable_max_accelerators(palette)
+    hooks = getattr(palette, "set_lifecycle_hooks", None)
+    if callable(hooks):
+        try:
+            hooks(on_open=_palette_opened, on_close=_palette_closed)
+        except Exception:
+            pass
     _palette = palette
     return palette
 
@@ -583,6 +829,7 @@ def show_palette(controller: Any = None) -> Any:
     _assert_main_thread()
     _qt_application()
     _retire_legacy_ui()
+    ensure_hotkey()
 
     active_controller = _set_palette_controller(controller)
     try:
@@ -677,6 +924,8 @@ def uninstall() -> None:
 
     global _controller, _launcher, _palette_controller, _owns_palette_controller
 
+    _remove_tab_hotkey()
+    set_accelerator_guard(False)
     _close_pending_dialogs()
     _clear_parameter_prompt()
     _dispose_popup()

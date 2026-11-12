@@ -28,12 +28,28 @@ refocusing reuses the same widget instance.
   guarded deferred check with session/generation validation. No scene action
   runs on blur.
 
+### Opening the palette
+
+- **Tab in the viewport opens the palette by default** when the transfer is
+  installed. The launcher writes the owned `3dsModeler_startup.ms` into Max's
+  user startup folder; on the next session it calls
+  `invoke_local(action="install_hotkey")`, which installs one session-local Qt
+  event filter. No Customize hotkey or OS hook is created, and a foreign file
+  with that name is never overwritten.
+- The opening Tab is consumed, so it never advances a context or reaches the
+  fresh search field. Modified Tab (Ctrl/Alt/Shift) and auto-repeat are ignored.
+- Tab is left alone while a foreign `QLineEdit` (or text editor/spin box)
+  owns focus, when any modal or popup widget is active, or while the palette is
+  already open.
+- Escape and pre-dispatch close through the same lifecycle hook; the host
+  restores `rt.enableAccelerators` to the value captured on open, once.
+
 ### Context pills and keys
 
 | Input | Result |
 | --- | --- |
 | Header pills `[0 Obj] [1 Vert] [2 Edge] [3 Border] [4 Face] [5 Elem]` | plain click = standard context switch; Ctrl+Click = switch with selection conversion |
-| Tab / Shift+Tab (including Backtab) | cycles contexts, not widget focus traversal |
+| Tab / Shift+Tab (including Backtab) | while open, cycles contexts, not widget focus traversal; when closed, Tab in the viewport opens the palette |
 | Alt+0..Alt+5 | chooses a context |
 | Typed `1`–`5` | text only; never a context switch |
 | Up/Down | moves the highlighted row, including disabled rows |

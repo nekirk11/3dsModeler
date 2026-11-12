@@ -38,6 +38,7 @@ class _WindowType(IntFlag):
     Popup = 1
     FramelessWindowHint = 2
     NoDropShadowWindowHint = 4
+    Dialog = 8
 
 
 class _WidgetAttribute(IntFlag):
@@ -108,6 +109,8 @@ class _EventType(IntFlag):
     WindowDeactivate = 4
     FocusIn = 5
     WindowTitleChange = 6
+    KeyRelease = 7
+    MouseButtonPress = 8
 
 
 class _Qt:
@@ -170,12 +173,22 @@ class _KeyEvent(_Event):
 
 
 class _MouseEvent(_Event):
-    def __init__(self, button: Any = _MouseButton.LeftButton) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        button: Any = _MouseButton.LeftButton,
+        global_position: Any = None,
+    ) -> None:
+        super().__init__(_EventType.MouseButtonPress)
         self._button = button
+        self._global_position = (
+            _PointF() if global_position is None else global_position
+        )
 
     def button(self) -> Any:
         return self._button
+
+    def globalPosition(self) -> Any:  # noqa: N802 - Qt spelling
+        return self._global_position
 
 
 class _Point:
@@ -188,6 +201,17 @@ class _Point:
 
     def y(self) -> int:
         return self._y
+
+
+class _PointF:
+    """Qt 6 QPointF stand-in: only sane after .toPoint()."""
+
+    def __init__(self, x: float = 0.0, y: float = 0.0) -> None:
+        self._x = float(x)
+        self._y = float(y)
+
+    def toPoint(self) -> _Point:  # noqa: N802 - Qt spelling
+        return _Point(int(self._x), int(self._y))
 
 
 class _Size:
@@ -208,6 +232,17 @@ class _Rect:
         self._y = y
         self._width = width
         self._height = height
+
+    def contains(self, point: Any) -> bool:
+        if not isinstance(point, _Point):
+            raise TypeError(
+                "QPoint expected, got %s (call toPoint() first)"
+                % type(point).__name__
+            )
+        return (
+            self._x <= point.x() < self._x + self._width
+            and self._y <= point.y() < self._y + self._height
+        )
 
 
 class _Style:
@@ -419,6 +454,9 @@ class _Widget:
         return _Size(self.width(), self.height())
 
     def rect(self) -> _Rect:  # noqa: N802
+        return _Rect(0, 0, self.width(), self.height())
+
+    def frameGeometry(self) -> _Rect:  # noqa: N802 - Qt spelling
         return _Rect(0, 0, self.width(), self.height())
 
     def move(self, x: Any, y: Any = None) -> None:
@@ -1000,6 +1038,50 @@ class FakeQtPaletteTests(unittest.TestCase):
         self.assertEqual(self.controller.count("switch_context"), 0)
         self.assertEqual(self.controller.count("navigate"), 0)
 
+    def test_textless_shortcut_override_is_accepted_by_both_paths(self) -> None:
+        palette = self.make()
+
+        via_filter = self.key_event("B", "", event_type=_EventType.ShortcutOverride)
+        for watcher in list(self.app._filters):
+            if watcher.eventFilter(palette._input, via_filter):
+                break
+        self.assertTrue(via_filter.isAccepted())
+
+        via_widget = self.key_event("B", "", event_type=_EventType.ShortcutOverride)
+        self.assertTrue(palette._input.event(via_widget))
+        self.assertTrue(via_widget.isAccepted())
+
+    def test_typing_and_enter_navigate_once_across_filter_and_widget(self) -> None:
+        palette = self.make()
+        self.controller.mutate(
+            rows=(
+                FakeRow("bevel", label="Bevel"),
+                FakeRow("bend", label="Bend"),
+            ),
+            highlighted_row_id="bevel",
+        )
+        for token, text in (("B", "b"), ("E", "e")):
+            self.shortcut_override(token, text)
+            self.press(token, text)
+        self.assertEqual(palette._input.text(), "be")
+        self.assertEqual(self.controller.count("set_query"), 2)
+
+        down = self.key_event("Down")
+        for watcher in list(self.app._filters):
+            if watcher.eventFilter(palette._input, down):
+                break
+        palette._input.keyPressEvent(down)  # same event object, second path
+        self.assertEqual(self.controller.count("navigate"), 1)
+        self.assertEqual(self.controller._view.highlighted_row_id, "bend")
+
+        enter = self.key_event("Return")
+        for watcher in list(self.app._filters):
+            if watcher.eventFilter(palette._input, enter):
+                break
+        palette._input.keyPressEvent(enter)
+        self.assertEqual(self.controller.count("activate"), 1)
+        self.assertEqual(self.last_call("activate")[1], "bend")
+
     def test_ctrl_editing_shortcuts_are_preserved(self) -> None:
         palette = self.make()
         for token in ("A", "C", "V", "X"):
@@ -1130,6 +1212,21 @@ class FakeQtPaletteTests(unittest.TestCase):
 
     # ---------------------------------------------------- focus lifecycle
 
+    def test_outside_click_converts_qpointf_before_hit_testing(self) -> None:
+        palette = self.make()
+        inside = _MouseEvent(global_position=_PointF(10.4, 10.4))
+        outside = _MouseEvent(global_position=_PointF(500.6, 10.4))
+
+        for watcher in list(self.app._filters):
+            watcher.eventFilter(object(), inside)
+        self.assertEqual(self.controller.count("cancel"), 0)
+        self.assertTrue(palette.isVisible())
+
+        for watcher in list(self.app._filters):
+            watcher.eventFilter(object(), outside)
+        self.assertEqual(self.controller.count("cancel"), 1)
+        self.assertFalse(palette.isVisible())
+
     def test_escape_cancels_exactly_once_and_restores_focus(self) -> None:
         viewport = _Widget()
         viewport.show()
@@ -1142,6 +1239,42 @@ class FakeQtPaletteTests(unittest.TestCase):
         self.press("Escape")
         self.assertEqual(self.controller.count("cancel"), 1)
         self.assertEqual(self.controller.count("activate"), 0)
+
+    def test_lifecycle_hooks_fire_once_on_escape_and_pre_dispatch(self) -> None:
+        events: list = []
+        palette = self.Palette(self.controller, None)
+        self.palette = palette
+        palette.set_lifecycle_hooks(
+            on_open=lambda: events.append("open"),
+            on_close=lambda: events.append("close"),
+        )
+
+        palette.show_at(_Point(50, 50))
+        self.assertEqual(events, ["open"])
+
+        self.press("Escape")
+        self.assertEqual(events, ["open", "close"])
+
+        palette.show_at(_Point(50, 50))
+        self.assertEqual(events, ["open", "close", "open"])
+        self.controller.trigger_pre_dispatch()
+        self.assertEqual(events, ["open", "close", "open", "close"])
+        palette.dispose()
+        self.assertEqual(events, ["open", "close", "open", "close"])
+
+    def test_deferred_refocus_skips_a_deactivated_palette(self) -> None:
+        palette = self.make()
+        outside = _Widget()
+        outside.show()
+        self.app._focus = outside
+        self.app._active = outside
+
+        _Timer.flush()
+        self.assertIs(self.app.focusWidget(), outside)
+
+        self.app._active = palette
+        palette._refocus_input(respect_activation=True)
+        self.assertIs(self.app.focusWidget(), palette._input)
 
     def test_child_focus_is_not_external_blur_but_outside_focus_cancels(self) -> None:
         palette = self.make()

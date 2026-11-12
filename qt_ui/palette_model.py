@@ -443,6 +443,11 @@ def confirmation_model(view: Any) -> ConfirmationModel | None:
 # ------------------------------------------------------------------ keyboard
 
 
+#: Printable symbol key tokens that must be accepted even when Windows Qt
+#: reports an empty ``text()`` on ShortcutOverride.
+_SYMBOL_TOKENS = (">", "-", "_", ".", "/")
+
+
 def _printable(text: Any) -> str:
     if not isinstance(text, str) or not text:
         return ""
@@ -509,6 +514,13 @@ def keyboard_intent(
         return KeyIntent("insert_text", text=printable or " ", key=token)
     if printable:
         return KeyIntent("insert_text", text=printable, key=token)
+    # Windows Qt often sends ShortcutOverride for a printable key with an
+    # empty ``text()`` but a valid letter/digit/symbol key token.  Accepting
+    # those is what keeps the host's W/E/R/X/T/C tool shortcuts from firing.
+    if len(token) == 1 and token.isalnum():
+        return KeyIntent("insert_text", text=token.lower(), key=token)
+    if token in _SYMBOL_TOKENS:
+        return KeyIntent("insert_text", text=token, key=token)
     return KeyIntent("ignore", key=token)
 
 

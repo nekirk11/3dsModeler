@@ -55,17 +55,20 @@ claim.
   ambiguity.
 - **Persistent macros, local hotkeys.** The launcher writes the owned
   `3dsModeler.mcr` and registers its `"3dsModeler"` category in the live
-  session. Hotkeys are assigned manually in **Customize > Hotkey Editor**.
-  Hotkey execution is a synchronous local-checkout load with no network.
+  session. Hotkeys can still be assigned manually in **Customize > Hotkey
+  Editor**. It also writes the owned `3dsModeler_startup.ms`, which installs a
+  session-local Tab listener so **Tab in the viewport opens the palette by
+  default**; no Customize hotkey is overwritten. Hotkey execution is a
+  synchronous local-checkout load with no network.
 
 ## First Max 2025 test: Git delivery (preferred)
 
 Requirements: 64-bit Windows, 3ds Max 2025/2025.1 with its bundled Python (3.11)
 and PySide6 6.5, and `git` on `PATH`. Public HTTPS access is enough for the
-first clone. Do not install another Python or Qt into Max, and do not add a
-startup script or registry entry. The launcher intentionally installs the
-persistent `3dsModeler` MacroScripts; it never assigns or overwrites a hotkey
-automatically.
+first clone. Do not install another Python or Qt into Max, and do not add your
+own startup script or registry entry. The launcher intentionally installs the
+persistent `3dsModeler` MacroScripts and the owned `3dsModeler_startup.ms` Tab
+listener; it never assigns or overwrites an existing hotkey automatically.
 
 1. Obtain [`tools/max_pull_and_load.ms`](tools/max_pull_and_load.ms) from the
    published `dev` branch and review it before running. In a fresh Max 2025
@@ -81,10 +84,13 @@ automatically.
    checkout stops with a finite repair message.
 3. The installer writes/verifies `3dsModeler.mcr` and, when `pymxs` is
    available, loads it immediately so the `"3dsModeler"` category appears in
-   **Customize > Hotkey Editor** without a restart. Assign
-   `ThreeDsModeler_Search` (and any `ThreeDsModeler_Context*` /
-   `...Convert` variants you want) manually. A restart is not required for
-   the category, but re-run the `.ms` after an update to refresh definitions.
+   **Customize > Hotkey Editor** without a restart. It also writes the owned
+   `3dsModeler_startup.ms` in Max's user startup folder so the next session's
+   **Tab in the viewport** opens the palette; a foreign file with that name is
+   never overwritten. Assign `ThreeDsModeler_Search` (and any
+   `ThreeDsModeler_Context*` / `...Convert` variants you want) manually if you
+   prefer a Customize hotkey. A restart is not required for the category, but
+   re-run the `.ms` after an update to refresh definitions.
 4. Record the printed checkout root and full 40-character commit SHA in
    [`docs/TOMORROW-MAX2025.md`](docs/TOMORROW-MAX2025.md). Diagnostics are
    Python: switch the Listener to the Python tab, or in the MAXScript tab run
@@ -300,8 +306,9 @@ bootstrap.uninstall()                  # remove prototype UI; not committed geom
    any Edit Poly modifier block topology editing; the block explains whether
    *Convert to Poly* or explicit *Collapse to Poly* is the intended remedy.
 2. Open the palette with `bootstrap.show_palette()`, the `ThreeDsModeler_Search`
-   macro, or an assigned hotkey. The real search line owns focus and shows a
-   caret; typing `w/e/r/x/t/c`, digits `1`–`5`, or Space stays text.
+   macro, an assigned Customize hotkey, or **Tab in the viewport** after the
+   owned startup listener is installed. The real search line owns focus and
+   shows a caret; typing `w/e/r/x/t/c`, digits `1`–`5`, or Space stays text.
 3. A plain pill click switches context; Ctrl+Click converts the selection with
    `EditablePoly.ConvertSelection`. Tab/Shift+Tab and Alt+0..5 also switch.
    Ordinary switches never convert geometry or selection.
@@ -346,6 +353,7 @@ remain **NOT RUN** in Max.
 | V2 host adapter/preparation/dispatch (`max_host/`) | Fixed registry plus 3-tier preparation, caddies/modes, clean dissolve; fake-runtime tests only, **NOT RUN in Max** |
 | V1 catalog/controller/panel/popup/parameter dialog | Frozen legacy path; retained for legacy tests and the sandbox, not a normal V2 launch |
 | Persistent MacroScripts (`3dsModeler.mcr`) | Deterministic generator, ownership/conflict guard, `fileIn` activation; **NOT RUN in Max** |
+| Default Tab listener (`3dsModeler_startup.ms`) | Deterministic generator, ownership/conflict guard, session-local Qt filter; **NOT RUN in Max** |
 | Browser sandbox | Real stdlib server with a **simulated** host; cannot control Max |
 | Git launcher (`tools/max_pull_and_load.ms`, `tools/max_pull_and_load.py`) | Source-complete and stdlib/alias tested; **NOT RUN** in Max or against live GitHub from Max |
 | Native runtime validation | **NOT RUN — no 3ds Max 2025 installation** |
@@ -496,13 +504,16 @@ active native tools, the rollback lockout, and the persistent macros intact.
 
 Then delete the `C:\dev\3dsModeler` checkout (or the extracted
 `max2025_menu_prototype/` directory for the ZIP fallback). The launcher creates
-no startup script or registry entry, but it **does** create one owned file,
-`3dsModeler.mcr`, in Max's user MacroScripts directory. It does not delete that
-file, remove hotkey assignments, or clear loaded-SHA/restart state
-automatically. To remove macros and hotkeys, do it explicitly and separately:
+no registry entry, but it **does** create two owned files: `3dsModeler.mcr` in
+Max's user MacroScripts directory and `3dsModeler_startup.ms` in Max's user
+startup folder. It does not delete those files, remove hotkey assignments, or
+clear loaded-SHA/restart state automatically. To remove macros, the default Tab
+listener, and hotkeys, do it explicitly and separately:
 
 1. Close Max (or at least unload the UI), then delete `3dsModeler.mcr` from
-   Max's user MacroScripts folder (`getDir #userMacros`).
+   Max's user MacroScripts folder (`getDir #userMacros`) and
+   `3dsModeler_startup.ms` from Max's user startup folder
+   (`getDir #userStartupScripts`).
 2. In **Customize > Hotkey Editor**, remove only the `"3dsModeler"` category
    assignments you created. No assignment was made for you and no W/E/R/Space
    binding was overwritten.

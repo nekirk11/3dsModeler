@@ -146,6 +146,9 @@ class FakePalette:
         self.shows: list = []
         self.refreshes = 0
         self.disposed = 0
+        self.on_open = None
+        self.on_close = None
+        self.events: list = []
         self._open = False
         self._disposed = False
         self.input = object()
@@ -154,17 +157,32 @@ class FakePalette:
     def input_widget(self):
         return self.input
 
+    def set_lifecycle_hooks(self, on_open=None, on_close=None) -> None:
+        self.on_open = on_open
+        self.on_close = on_close
+
     def show_at(self, global_pos=None, *, return_focus=None) -> None:
         self.shows.append(global_pos)
         self._open = True
+        self.events.append("open")
+        if self.on_open is not None:
+            self.on_open()
         return self.controller.open()
+
+    def close(self) -> None:
+        if not self._open:
+            return
+        self._open = False
+        self.events.append("close")
+        if self.on_close is not None:
+            self.on_close()
 
     def refresh(self) -> None:
         self.refreshes += 1
 
     def dispose(self) -> None:
+        self.close()
         self.disposed += 1
-        self._open = False
         self._disposed = True
 
 
@@ -299,11 +317,109 @@ def fake_qt_parts():
     return (object(), FakeQtGui, FakeQtWidgets)
 
 
+class _HotkeyLineEdit:
+    """Stands in for a foreign QLineEdit that owns the keyboard."""
+
+
+class _HotkeyItemView:
+    """Stands in for a foreign QAbstractItemView that owns the keyboard."""
+
+
+class _HotkeyComboBox:
+    """Stands in for a foreign QComboBox that owns the keyboard."""
+
+
+class _HotkeyEvent:
+    def __init__(
+        self,
+        event_type: str,
+        key: str,
+        modifiers: int = 0,
+        auto_repeat: bool = False,
+    ) -> None:
+        self._type = event_type
+        self._key = key
+        self._modifiers = modifiers
+        self._auto_repeat = auto_repeat
+        self.accepted = False
+
+    def type(self):
+        return self._type
+
+    def key(self):
+        return self._key
+
+    def modifiers(self):
+        return self._modifiers
+
+    def isAutoRepeat(self) -> bool:  # noqa: N802 - Qt spelling
+        return self._auto_repeat
+
+    def accept(self) -> None:
+        self.accepted = True
+
+
+class _HotkeyApplication:
+    def __init__(self, focus=None) -> None:
+        self.focus = focus
+        self.active = None
+        self.modal = None
+        self.popup = None
+        self.filters: list = []
+
+    def installEventFilter(self, event_filter) -> None:  # noqa: N802
+        self.filters.append(event_filter)
+
+    def removeEventFilter(self, event_filter) -> None:  # noqa: N802
+        if event_filter in self.filters:
+            self.filters.remove(event_filter)
+
+    def focusWidget(self):  # noqa: N802
+        return self.focus
+
+    def activeWindow(self):  # noqa: N802
+        return self.active
+
+    def activeModalWidget(self):  # noqa: N802
+        return self.modal
+
+    def activePopupWidget(self):  # noqa: N802
+        return self.popup
+
+
+def hotkey_qt_parts(application: _HotkeyApplication):
+    core = SimpleNamespace(
+        QObject=type("QObject", (), {}),
+        QEvent=SimpleNamespace(
+            Type=SimpleNamespace(ShortcutOverride="shortcut", KeyPress="press")
+        ),
+        Qt=SimpleNamespace(
+            Key=SimpleNamespace(Key_Tab="tab"),
+            KeyboardModifier=SimpleNamespace(
+                ControlModifier=1,
+                AltModifier=2,
+                ShiftModifier=4,
+                MetaModifier=8,
+            ),
+        ),
+    )
+    widgets = SimpleNamespace(
+        QLineEdit=_HotkeyLineEdit,
+        QAbstractItemView=_HotkeyItemView,
+        QComboBox=_HotkeyComboBox,
+        QApplication=SimpleNamespace(instance=lambda: application),
+    )
+    return core, widgets
+
+
 class BootstrapTests(unittest.TestCase):
     def setUp(self) -> None:
         bootstrap.uninstall()
         bootstrap._palette_host = None
         bootstrap._controller = None
+        bootstrap._accelerator_saved = bootstrap._ACCELERATOR_UNSET
+        bootstrap._tab_hotkey_filter = None
+        bootstrap._tab_hotkey_hosts = []
         FakePanel.instances = []
         FakePopup.instances = []
         FakePalette.instances = []
@@ -328,6 +444,9 @@ class BootstrapTests(unittest.TestCase):
             bootstrap._palette_host = None
             bootstrap._controller = None
         finally:
+            bootstrap._accelerator_saved = bootstrap._ACCELERATOR_UNSET
+            bootstrap._tab_hotkey_filter = None
+            bootstrap._tab_hotkey_hosts = []
             for patch in self.patches:
                 patch.stop()
 
@@ -543,6 +662,32 @@ class BootstrapTests(unittest.TestCase):
 
         self.assertIsNotNone(palette)
 
+    def test_palette_lifecycle_restores_enableaccelerators_to_prior_value(self) -> None:
+        for previous in (True, False):
+            with self.subTest(previous=previous):
+                runtime = SimpleNamespace(enableAccelerators=previous)
+                fake_pymxs = SimpleNamespace(runtime=runtime)
+                with mock.patch.dict(sys.modules, {"pymxs": fake_pymxs}):
+                    palette = bootstrap.show_palette(FakeV2Controller())
+                    self.assertFalse(runtime.enableAccelerators)
+                    self.assertEqual(palette.events, ["open"])
+
+                    palette.close()  # Escape/pre-dispatch both use this hook
+                    self.assertIs(runtime.enableAccelerators, previous)
+
+                    bootstrap.set_accelerator_guard(False)  # idempotent
+                    self.assertIs(runtime.enableAccelerators, previous)
+                bootstrap.uninstall()
+
+    def test_accelerator_guard_is_nested_and_restores_the_saved_value(self) -> None:
+        runtime = SimpleNamespace(enableAccelerators=True)
+        with mock.patch.dict(sys.modules, {"pymxs": SimpleNamespace(runtime=runtime)}):
+            bootstrap.set_accelerator_guard(True)
+            bootstrap.set_accelerator_guard(True)
+            self.assertFalse(runtime.enableAccelerators)
+            bootstrap.set_accelerator_guard(False)
+            self.assertTrue(runtime.enableAccelerators)
+
     def test_missing_qt_dialog_dependency_is_a_clear_error(self) -> None:
         controller = FakeController()
         with mock.patch.object(
@@ -553,6 +698,134 @@ class BootstrapTests(unittest.TestCase):
             with self.assertRaises(ImportError) as raised:
                 bootstrap._ensure_parameter_prompt(controller)
         self.assertIn("PySide6", str(raised.exception))
+
+
+class TabHotkeyTests(unittest.TestCase):
+    """The default Tab listener must never steal a foreign editor or modal."""
+
+    def setUp(self) -> None:
+        bootstrap.uninstall()
+        bootstrap._accelerator_saved = bootstrap._ACCELERATOR_UNSET
+        bootstrap._tab_hotkey_filter = None
+        bootstrap._tab_hotkey_hosts = []
+        self.application = _HotkeyApplication(focus=object())
+        self.main_window = object()
+        core, widgets = hotkey_qt_parts(self.application)
+        self.patches = [
+            mock.patch.object(
+                bootstrap, "_qt_parts", lambda: (core, FakeQtGui, widgets)
+            ),
+            mock.patch.object(
+                bootstrap, "_max_main_window", lambda: self.main_window
+            ),
+        ]
+        for patch in self.patches:
+            patch.start()
+        self.addCleanup(self._cleanup)
+
+    def _cleanup(self) -> None:
+        bootstrap._remove_tab_hotkey()
+        for patch in reversed(self.patches):
+            patch.stop()
+        bootstrap._tab_hotkey_filter = None
+        bootstrap._tab_hotkey_hosts = []
+        bootstrap._accelerator_saved = bootstrap._ACCELERATOR_UNSET
+
+    def install(self):
+        event_filter = bootstrap.install_tab_hotkey()
+        self.assertIsNotNone(event_filter)
+        self.assertIn(event_filter, self.application.filters)
+        return event_filter
+
+    def test_tab_in_the_viewport_opens_the_palette_without_a_context_switch(self) -> None:
+        event_filter = self.install()
+        opening = SimpleNamespace(suppressed=0)
+
+        def suppress() -> None:
+            opening.suppressed += 1
+
+        opening.suppress_next_tab = suppress
+        with mock.patch.object(
+            bootstrap, "switch_context", side_effect=AssertionError("context")
+        ), mock.patch.object(
+            bootstrap, "show_palette", return_value=opening
+        ) as shown:
+            override = _HotkeyEvent("shortcut", "tab")
+            self.assertTrue(event_filter.eventFilter(object(), override))
+            self.assertEqual(shown.call_count, 0)
+
+            press = _HotkeyEvent("press", "tab")
+            self.assertTrue(event_filter.eventFilter(object(), press))
+
+        shown.assert_called_once_with()
+        self.assertEqual(opening.suppressed, 1)
+
+    def test_tab_inside_a_foreign_line_edit_or_modal_is_left_alone(self) -> None:
+        event_filter = self.install()
+        with mock.patch.object(
+            bootstrap, "show_palette", side_effect=AssertionError("stolen")
+        ):
+            self.application.focus = _HotkeyLineEdit()
+            self.assertFalse(
+                event_filter.eventFilter(object(), _HotkeyEvent("press", "tab"))
+            )
+
+            self.application.focus = _HotkeyItemView()
+            self.assertFalse(
+                event_filter.eventFilter(object(), _HotkeyEvent("press", "tab"))
+            )
+
+            self.application.focus = _HotkeyComboBox()
+            self.assertFalse(
+                event_filter.eventFilter(object(), _HotkeyEvent("press", "tab"))
+            )
+
+            self.application.focus = object()
+            self.application.modal = object()
+            self.assertFalse(
+                event_filter.eventFilter(object(), _HotkeyEvent("press", "tab"))
+            )
+
+            self.application.modal = None
+            self.application.popup = object()
+            self.assertFalse(
+                event_filter.eventFilter(object(), _HotkeyEvent("press", "tab"))
+            )
+
+    def test_modeless_secondary_window_keeps_normal_tab_traversal(self) -> None:
+        event_filter = self.install()
+        with mock.patch.object(
+            bootstrap, "show_palette", side_effect=AssertionError("stolen")
+        ):
+            self.application.active = object()
+            self.assertFalse(
+                event_filter.eventFilter(object(), _HotkeyEvent("press", "tab"))
+            )
+
+        self.application.active = self.main_window
+        with mock.patch.object(
+            bootstrap, "show_palette", return_value=SimpleNamespace()
+        ) as shown:
+            self.assertTrue(
+                event_filter.eventFilter(object(), _HotkeyEvent("press", "tab"))
+            )
+        shown.assert_called_once_with()
+
+    def test_modified_or_repeated_tab_is_not_a_hotkey(self) -> None:
+        event_filter = self.install()
+        with mock.patch.object(
+            bootstrap, "show_palette", side_effect=AssertionError("stolen")
+        ):
+            self.assertFalse(
+                event_filter.eventFilter(
+                    object(), _HotkeyEvent("press", "tab", modifiers=1)
+                )
+            )
+            self.assertFalse(
+                event_filter.eventFilter(
+                    object(), _HotkeyEvent("press", "tab", auto_repeat=True)
+                )
+            )
 
 
 class BootstrapImportTests(unittest.TestCase):

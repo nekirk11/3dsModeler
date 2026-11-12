@@ -75,12 +75,28 @@ def _key_token(qtcore: Any, key: Any) -> str:
         candidate = getattr(keys, "Key_" + name, None)
         if candidate is not None and key == candidate:
             return name
+    # Printable symbol keys needed by ShortcutOverride handling; Windows Qt
+    # reports these by key code while ``event.text()`` may be empty.
+    for name, symbol in (
+        ("Greater", ">"),
+        ("Minus", "-"),
+        ("Underscore", "_"),
+        ("Period", "."),
+        ("Slash", "/"),
+    ):
+        candidate = getattr(keys, "Key_" + name, None)
+        if candidate is not None and key == candidate:
+            return symbol
     try:
         value = int(key)
     except (TypeError, ValueError):
         return ""
     if 0x30 <= value <= 0x39 or 0x41 <= value <= 0x5A:
         return chr(value)
+    if 0x20 <= value <= 0x7E:
+        character = chr(value)
+        if character in (">", "-", "_", ".", "/"):
+            return character
     return ""
 
 
@@ -94,6 +110,15 @@ def _event_intent(qtcore: Any, event: Any) -> presentation.KeyIntent:
         shift=bool(modifiers & qtcore.Qt.KeyboardModifier.ShiftModifier),
         auto_repeat=bool(event.isAutoRepeat()),
     )
+
+
+def _event_type(qtcore: Any, name: str) -> Any:
+    """Return a QEvent type when the running binding/fake exposes it."""
+
+    try:
+        return getattr(qtcore.QEvent.Type, name, None)
+    except AttributeError:
+        return None
 
 
 def _exception_text(exc: BaseException) -> str:
@@ -173,6 +198,58 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
                 return
             super().mouseReleaseEvent(event)
 
+    class _SearchLineEdit(qtwidgets.QLineEdit):
+        """Search field that owns every printable/navigation key directly.
+
+        The application-level filter is the first line of defence, but Windows
+        can route a ``ShortcutOverride``/``KeyPress`` to the focused widget
+        without a matching filter delivery.  Handling the keys here as well
+        (deduplicated by the owning palette) keeps typing, arrows, Enter, Esc
+        and Tab working in every event order.
+        """
+
+        def __init__(self, owner: Any, parent: Any = None) -> None:
+            self._owner = owner
+            super().__init__(parent)
+
+        def focusNextPrevChild(self, next: bool) -> bool:  # noqa: N802
+            # Tab is a context cycle, never Qt focus traversal.
+            return False
+
+        def event(self, event: Any) -> bool:
+            if event.type() == qtcore.QEvent.Type.ShortcutOverride:
+                owner = self._owner
+                handler = getattr(owner, "_handle_search_shortcut_override", None)
+                if handler is not None and handler(event):
+                    event.accept()
+                    return True
+            parent_event = getattr(qtwidgets.QLineEdit, "event", None)
+            if parent_event is None:
+                return True
+            return parent_event(self, event)
+
+        def keyPressEvent(self, event: Any) -> None:  # noqa: N802 - Qt signature
+            owner = self._owner
+            handler = getattr(owner, "_handle_search_key_press", None)
+            if handler is not None and handler(event):
+                event.accept()
+                return
+            parent_event = getattr(qtwidgets.QLineEdit, "keyPressEvent", None)
+            if parent_event is None:
+                return
+            parent_event(self, event)
+
+        def keyReleaseEvent(self, event: Any) -> None:  # noqa: N802 - Qt signature
+            owner = self._owner
+            handler = getattr(owner, "_handle_search_key_release", None)
+            if handler is not None and handler(event):
+                event.accept()
+                return
+            parent_event = getattr(qtwidgets.QLineEdit, "keyReleaseEvent", None)
+            if parent_event is None:
+                return
+            parent_event(self, event)
+
     class SearchPalette(qtwidgets.QFrame):
         """One shared, reusable palette window over a palette controller."""
 
@@ -203,12 +280,21 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             self._input_had_focus = False
             self._clock = time.monotonic
             self._dispatch_hook = self._prepare_dispatch
+            self._last_key_event: Any = None
+            self._suppress_tab = 0
+            self._lifecycle_open = False
+            self._on_open: Any = None
+            self._on_close: Any = None
 
             super().__init__(parent)
             self.setObjectName(PALETTE_OBJECT)
             self.setWindowTitle(WINDOW_TITLE)
+            # ``Qt.Popup`` leaves Win32 GetFocus() on Max's native DirectX
+            # viewport HWND, so typing never reaches the search field.  An
+            # activatable frameless Dialog parented to Max's QMainWindow is
+            # what actually transfers keyboard focus on Windows.
             self.setWindowFlags(
-                qtcore.Qt.WindowType.Popup
+                qtcore.Qt.WindowType.Dialog
                 | qtcore.Qt.WindowType.FramelessWindowHint
                 | qtcore.Qt.WindowType.NoDropShadowWindowHint
             )
@@ -258,7 +344,7 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             self._pills_row.setSpacing(3)
             outer.addLayout(self._pills_row)
 
-            self._input = qtwidgets.QLineEdit(self)
+            self._input = _SearchLineEdit(self, self)
             self._input.setObjectName(INPUT_OBJECT)
             self._input.setPlaceholderText("Type a maneuver, alias or > command")
             self._input.textEdited.connect(self._on_text_edited)
@@ -330,6 +416,60 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
 
             return self._input
 
+        def set_lifecycle_hooks(
+            self, on_open: Any = None, on_close: Any = None
+        ) -> None:
+            """Install host-neutral open/close callbacks (no Qt/pymxs imports).
+
+            The host uses these to couple Max's Win32 accelerator state to the
+            palette lifetime without this module importing ``pymxs``.
+            """
+
+            self._on_open = on_open
+            self._on_close = on_close
+
+        def suppress_next_tab(self) -> None:
+            """Swallow the Tab that opened this palette in the same tick.
+
+            The global hotkey listener returns ``True`` for the opening
+            KeyPress, but Windows can still deliver that press (or its release)
+            to the newly focused search field.  Exactly one stray Tab event is
+            consumed, and the guard expires on the next event-loop turn.
+            """
+
+            self._suppress_tab = 1
+            try:
+                qtcore.QTimer.singleShot(0, self._clear_tab_suppression)
+            except (AttributeError, RuntimeError, TypeError):
+                self._suppress_tab = 0
+
+        def _clear_tab_suppression(self) -> None:
+            self._suppress_tab = 0
+
+        def _notify_open(self) -> None:
+            if self._lifecycle_open:
+                return
+            self._lifecycle_open = True
+            callback = self._on_open
+            if callback is None:
+                return
+            try:
+                callback()
+            except Exception:
+                pass
+
+        def _notify_close(self) -> None:
+            if not self._lifecycle_open:
+                return
+            self._lifecycle_open = False
+            callback = self._on_close
+            if callback is None:
+                return
+            try:
+                callback()
+            except Exception:
+                pass
+
         def show_at(self, global_pos: Any = None, *, return_focus: Any = None) -> Any:
             """Open/raise the one palette and focus its real line edit."""
 
@@ -373,9 +513,10 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             self._open = True
             self._view = view
             self._render(view)
+            self._notify_open()
             self._position_near(global_pos, app)
             self._install_filter(app)
-            # Windows emits transient Popup activation changes during show();
+            # Windows emits transient activation changes during show();
             # only treat a deactivate/focus-out as a close once the input has
             # actually held focus.
             self._input_had_focus = False
@@ -383,6 +524,11 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             self.raise_()
             self.activateWindow()
             self._refocus_input()
+            # Win32 keyboard focus can land on Max's native viewport HWND even
+            # after activateWindow(); one zero-delay refocus moves the real
+            # caret into the search field once the window is mapped.  It may
+            # not reclaim focus if the palette was deactivated in between.
+            qtcore.QTimer.singleShot(0, self._refocus_deferred)
             return view
 
         def refresh(self) -> Any:
@@ -423,6 +569,7 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
                 except Exception:
                     pass
             self._finish_close(restore=True)
+            self._notify_close()
 
         def dispose(self) -> None:
             """Idempotently release this widget; never touch the QApplication."""
@@ -437,6 +584,7 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             self._open = False
             self._view = None
             self._remove_filter()
+            self._notify_close()
             clearer = getattr(self._controller, "clear_pre_dispatch", None)
             if callable(clearer):
                 try:
@@ -616,21 +764,20 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
                 or not self.isVisible()
             ):
                 return False
+            event_type = event.type()
+            if event_type == _event_type(qtcore, "MouseButtonPress"):
+                # A Dialog (unlike Qt.Popup) stays open on outside clicks.
+                if not self._owns_widget(watched) and self._outside_click(event):
+                    self.cancel()
+                    return False
             if not self._owns_widget(watched):
                 return False
-            event_type = event.type()
             if event_type == qtcore.QEvent.Type.ShortcutOverride:
-                intent = _event_intent(qtcore, event)
-                if intent.action != "ignore":
-                    # Accept the shortcut override, then let the real KeyPress
-                    # flow into the QLineEdit.  Consuming KeyPress would break
-                    # typing; leaving ShortcutOverride unaccepted would fire
-                    # the host's W/E/R/X/T/C tool shortcuts.
-                    event.accept()
-                    return True
-                return False
+                return self._handle_search_shortcut_override(event)
             if event_type == qtcore.QEvent.Type.KeyPress:
-                return self._handle_key_intent(_event_intent(qtcore, event))
+                return self._handle_search_key_press(event)
+            if event_type == _event_type(qtcore, "KeyRelease"):
+                return self._handle_search_key_release(event)
             if event_type == qtcore.QEvent.Type.FocusIn:
                 if watched is self._input:
                     self._input_had_focus = True
@@ -639,6 +786,105 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
                 if getattr(self, "_input_had_focus", False):
                     self._schedule_focus_check()
                 return False
+            return False
+
+        # --------------------------------------------------- direct key paths
+
+        def _claim_key_event(self, event: Any) -> bool:
+            """True the first time this exact event object is handled."""
+
+            if getattr(self, "_last_key_event", None) is event:
+                return False
+            self._last_key_event = event
+            return True
+
+        def _handle_search_shortcut_override(self, event: Any) -> bool:
+            if self._disposed or not self._open:
+                return False
+            intent = _event_intent(qtcore, event)
+            if intent.action == "ignore":
+                return False
+            # Accept the override so Qt/host shortcuts never fire; the real
+            # KeyPress still edits or navigates.
+            if not self._claim_key_event(event):
+                return True
+            event.accept()
+            return True
+
+        def _handle_search_key_press(self, event: Any) -> bool:
+            if self._disposed or not self._open:
+                return False
+            if (
+                self._suppress_tab > 0
+                and _key_token(qtcore, event.key()) == "Tab"
+            ):
+                self._suppress_tab = 0
+                return True
+            intent = _event_intent(qtcore, event)
+            if intent.action in ("insert_text", "edit", "ignore"):
+                # Normal QLineEdit editing (typing, Backspace, cursor,
+                # Ctrl+A/C/V/X) must reach the real widget untouched.
+                return False
+            if not self._claim_key_event(event):
+                return True
+            return self._handle_key_intent(intent)
+
+        def _handle_search_key_release(self, event: Any) -> bool:
+            if self._disposed or not self._open:
+                return False
+            if (
+                self._suppress_tab > 0
+                and _key_token(qtcore, event.key()) == "Tab"
+            ):
+                self._suppress_tab = 0
+                return True
+            return False
+
+        def _outside_click(self, event: Any) -> bool:
+            point = None
+            getter = getattr(event, "globalPosition", None)
+            if callable(getter):
+                try:
+                    point = getter()
+                except (RuntimeError, TypeError):
+                    point = None
+            if point is None:
+                getter = getattr(event, "globalPos", None)
+                if callable(getter):
+                    try:
+                        point = getter()
+                    except (RuntimeError, TypeError):
+                        point = None
+            if point is None:
+                return False
+            # Qt 6 hands back a QPointF from globalPosition(); frameGeometry()
+            # only accepts a QPoint.
+            to_point = getattr(point, "toPoint", None)
+            if callable(to_point):
+                try:
+                    point = to_point()
+                except (AttributeError, TypeError, RuntimeError):
+                    return False
+            try:
+                return not self.frameGeometry().contains(point)
+            except (AttributeError, TypeError, RuntimeError):
+                return False
+
+        def keyPressEvent(self, event: Any) -> None:  # noqa: N802 - Qt signature
+            if self._handle_search_key_press(event):
+                event.accept()
+                return
+            super().keyPressEvent(event)
+
+        def keyReleaseEvent(self, event: Any) -> None:  # noqa: N802 - Qt signature
+            if self._handle_search_key_release(event):
+                event.accept()
+                return
+            super().keyReleaseEvent(event)
+
+        def focusNextPrevChild(self, next: bool) -> bool:  # noqa: N802
+            # Tab cycles the palette context; it must never move focus away
+            # from the search field.
             return False
 
         def _handle_key_intent(self, intent: presentation.KeyIntent) -> bool:
@@ -827,6 +1073,7 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
                 if result is not None and not view_is_closed(result):
                     self._open = True
                     self._pre_dispatched = False
+                    self._notify_open()
                     self._render(result)
                     self._install_filter(qtwidgets.QApplication.instance())
                     self.show()
@@ -856,6 +1103,9 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
                 return
             self._pre_dispatched = True
             self._open = False
+            # Restore the host's Win32 accelerator state *before* the native
+            # caddy/mode starts; it must not inherit the palette's lockout.
+            self._notify_close()
             self._remove_filter()
             self._confirmation_token = ""
             self._confirm_bar.hide()
@@ -870,6 +1120,7 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             self._confirmation_token = ""
             self._confirm_bar.hide()
             self._remove_filter()
+            self._notify_close()
             self._hide_without_cancel()
             if restore:
                 self._restore_focus()
@@ -899,8 +1150,24 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             except (RuntimeError, AttributeError):
                 return
 
-        def _refocus_input(self) -> None:
+        def _refocus_deferred(self) -> None:
+            """One event-loop-turn refocus, only while still the active window.
+
+            Win32 may deliver activation changes between ``show_at`` and this
+            callback; without the guard the palette would steal the caret back
+            from Max's viewport (or another application) after an outside
+            click or Alt+Tab.
+            """
+
+            self._refocus_input(respect_activation=True)
+
+        def _refocus_input(self, respect_activation: bool = False) -> None:
             if self._disposed or not self._open:
+                return
+            # Never reclaim focus after the palette stopped being the active
+            # window (outside click / alt-tab); the deferred focus check will
+            # cancel instead.
+            if respect_activation and not self._application_active():
                 return
             try:
                 if self._input.isVisible():

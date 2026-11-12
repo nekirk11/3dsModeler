@@ -72,14 +72,16 @@ class ActivationTests(unittest.TestCase):
         self.directory = Path(self._temp.name) / "MacroScripts"
         self.addCleanup(self._temp.cleanup)
 
-    def _fake_pymxs(self, file_in=None, macros_load=None, macros_dir=None) -> types.ModuleType:
+    def _fake_pymxs(self, file_in=None, macros_load=None, macros_dir=None, startup_dir=None) -> types.ModuleType:
         runtime = SimpleNamespace()
         if file_in is not None:
             runtime.fileIn = file_in
         if macros_load is not None:
             runtime.macros = SimpleNamespace(load=macros_load)
-        if macros_dir is not None:
-            runtime.execute = lambda command: str(macros_dir)
+        if macros_dir is not None or startup_dir is not None:
+            runtime.execute = lambda command: str(
+                startup_dir if "userStartupScripts" in command else macros_dir
+            )
         module = types.ModuleType("pymxs")
         module.runtime = runtime
         return module
@@ -130,7 +132,9 @@ class ActivationTests(unittest.TestCase):
         self.assertNotEqual(namespace["MAX_MACROS_SOURCE_B64"], "")
         calls: list = []
         fake = self._fake_pymxs(
-            file_in=lambda path: calls.append(path), macros_dir=self.directory
+            file_in=lambda path: calls.append(path),
+            macros_dir=self.directory,
+            startup_dir=Path(self._temp.name) / "Startup",
         )
         with mock.patch.dict(sys.modules, {"pymxs": fake}):
             self.assertTrue(namespace["_install_macros"]())
@@ -140,6 +144,45 @@ class ActivationTests(unittest.TestCase):
             written.read_text(encoding="utf-8"), launcher.render_macro_source()
         )
         written.unlink()
+
+    def test_register_macros_writes_the_owned_startup_listener(self) -> None:
+        import base64
+        import re
+
+        startup = Path(self._temp.name) / "Startup"
+        fake = self._fake_pymxs(
+            macros_dir=self.directory, startup_dir=startup
+        )
+        with mock.patch.dict(sys.modules, {"pymxs": fake}):
+            launcher.register_macros(target_dir=self.directory)
+
+        path = startup / launcher.STARTUP_FILE_NAME
+        data = path.read_text(encoding="utf-8")
+        self.assertTrue(data.startswith(launcher.STARTUP_FILE_HEADER))
+        self.assertEqual(data, launcher.render_startup_source())
+        encoded = re.search(r"b64decode\('([^']+)'\)", data)
+        self.assertIsNotNone(encoded)
+        body = base64.b64decode(encoded.group(1)).decode("utf-8")
+        self.assertIn("ACTION = 'install_hotkey'", body)
+
+    def test_foreign_startup_script_is_never_overwritten(self) -> None:
+        startup = Path(self._temp.name) / "Startup"
+        startup.mkdir(parents=True)
+        foreign = startup / launcher.STARTUP_FILE_NAME
+        foreign.write_text("-- user startup\n", encoding="utf-8")
+        fake = self._fake_pymxs(
+            macros_dir=self.directory, startup_dir=startup
+        )
+
+        with mock.patch.dict(sys.modules, {"pymxs": fake}):
+            with self.assertRaises(launcher.LauncherError) as raised:
+                launcher.register_macros(target_dir=self.directory)
+
+        self.assertEqual(raised.exception.category, "macro_conflict")
+        self.assertEqual(
+            raised.exception.message, launcher.STARTUP_CONFLICT_MESSAGE
+        )
+        self.assertEqual(foreign.read_text(encoding="utf-8"), "-- user startup\n")
 
 
 class ConflictAndTeardownTests(unittest.TestCase):
@@ -182,10 +225,20 @@ class LocalInvokeTests(unittest.TestCase):
         def __init__(self) -> None:
             self.shown = 0
             self.switches: list = []
+            self.ensured = 0
+            self.installed = 0
 
         def show_palette(self):
             self.shown += 1
             return "palette"
+
+        def ensure_hotkey(self):
+            self.ensured += 1
+            return "filter"
+
+        def install_tab_hotkey(self):
+            self.installed += 1
+            return "filter"
 
         def switch_context(self, context, *, convert_selection=False):
             self.switches.append((context, convert_selection))
@@ -238,6 +291,41 @@ class LocalInvokeTests(unittest.TestCase):
         self.assertEqual(fake_bootstrap.shown, 0)
         self.assertEqual(fake_bootstrap.switches, [("edge", True)])
 
+    def test_invoke_local_install_hotkey_uses_only_the_local_bootstrap(self) -> None:
+        fake_bootstrap = self.FakeBootstrap()
+        session = launcher._session_state()
+        session.bootstrap = fake_bootstrap
+        loaded: list = []
+
+        with mock.patch.object(
+            launcher, "_validate_checkout", return_value={"head": SHA_ONE}
+        ), mock.patch.object(
+            launcher,
+            "load_checkout_package",
+            side_effect=lambda root, sha: loaded.append((root, sha)),
+        ), mock.patch.object(
+            launcher, "start", side_effect=AssertionError("network update")
+        ), mock.patch.object(
+            launcher, "_fetch_origin_dev", side_effect=AssertionError("fetch")
+        ), mock.patch.object(
+            launcher, "_clone_checkout", side_effect=AssertionError("clone")
+        ), mock.patch(
+            "subprocess.run", side_effect=AssertionError("subprocess")
+        ), mock.patch(
+            "urllib.request.urlopen", side_effect=AssertionError("network")
+        ):
+            result = launcher.invoke_local(
+                action="install_hotkey", checkout=self.root
+            )
+
+        self.assertEqual(result, "filter")
+        self.assertEqual(fake_bootstrap.installed, 1)
+        self.assertEqual(fake_bootstrap.ensured, 1)
+        self.assertEqual(fake_bootstrap.shown, 0)
+        self.assertEqual(fake_bootstrap.switches, [])
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0][1], SHA_ONE)
+
     def test_invoke_local_rejects_unknown_fixed_enums(self) -> None:
         with self.assertRaises(launcher.LauncherError):
             launcher.invoke_local(action="shell", checkout=self.root)
@@ -245,6 +333,10 @@ class LocalInvokeTests(unittest.TestCase):
             launcher.invoke_local(action="edge", context="face", checkout=self.root)
         with self.assertRaises(launcher.LauncherError):
             launcher.invoke_local(action="edge", convert_selection="yes", checkout=self.root)
+        with self.assertRaises(launcher.LauncherError):
+            launcher.invoke_local(
+                action="install_hotkey", context="edge", checkout=self.root
+            )
 
 
 class RenderedMacroBodyTests(unittest.TestCase):

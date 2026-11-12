@@ -178,6 +178,22 @@ class KeyboardIntentTests(unittest.TestCase):
         self.assertEqual(composed.action, "insert_text")
         self.assertEqual(composed.text, "ä")
 
+    def test_textless_shortcut_override_keeps_letters_and_symbols_typed(self) -> None:
+        """Windows Qt sends ShortcutOverride with key but empty text()."""
+
+        for key in ("B", "E", "W", "0", "9"):
+            with self.subTest(key=key):
+                intent = model.keyboard_intent(key, "")
+                self.assertEqual(intent.action, "insert_text")
+                self.assertEqual(intent.text, key.lower())
+        for key in model._SYMBOL_TOKENS:
+            with self.subTest(key=key):
+                intent = model.keyboard_intent(key, "")
+                self.assertEqual(intent.action, "insert_text")
+                self.assertEqual(intent.text, key)
+        self.assertEqual(model.keyboard_intent("F1", "").action, "ignore")
+        self.assertEqual(model.keyboard_intent("", "").action, "ignore")
+
 
 class BadgeTests(unittest.TestCase):
     def test_pivot_selection_route_and_context_badges(self) -> None:
