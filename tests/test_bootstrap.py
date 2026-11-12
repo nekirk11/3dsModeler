@@ -387,6 +387,62 @@ class _HotkeyApplication:
         return self.popup
 
 
+class _WrapperWindow:
+    """Shiboken-style wrapper: equal to the same native window, distinct object."""
+
+    def __init__(self, native_id: int) -> None:
+        self._native_id = int(native_id)
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, _WrapperWindow)
+            and other._native_id == self._native_id
+        )
+
+    def __hash__(self) -> int:
+        return hash(("wrapper-window", self._native_id))
+
+    def winId(self) -> int:  # noqa: N802 - Qt spelling
+        return self._native_id
+
+
+class _InstallableWindow(_WrapperWindow):
+    def __init__(self, native_id: int) -> None:
+        super().__init__(native_id)
+        self.filters: list = []
+
+    def installEventFilter(self, event_filter) -> None:  # noqa: N802
+        self.filters.append(event_filter)
+
+
+class _LifecyclePalette:
+    """Minimal palette whose open/visible state follows show/cancel/close."""
+
+    def __init__(self) -> None:
+        self._open = False
+        self.visible = False
+        self.cancelled = 0
+        self.suppressed = 0
+
+    def open(self) -> None:
+        self._open = True
+        self.visible = True
+
+    def isVisible(self) -> bool:  # noqa: N802 - Qt spelling
+        return self.visible
+
+    def cancel(self) -> None:
+        self.cancelled += 1
+        self._open = False
+        self.visible = False
+
+    def close(self) -> None:
+        self.cancel()
+
+    def suppress_next_tab(self) -> None:
+        self.suppressed += 1
+
+
 def hotkey_qt_parts(application: _HotkeyApplication):
     core = SimpleNamespace(
         QObject=type("QObject", (), {}),
@@ -826,6 +882,111 @@ class TabHotkeyTests(unittest.TestCase):
                     object(), _HotkeyEvent("press", "tab", auto_repeat=True)
                 )
             )
+
+    def test_fresh_main_window_wrappers_never_wedge_the_tab_hotkey(self) -> None:
+        """Live bug: a new Shiboken wrapper for the same QMainWindow blocked Tab."""
+
+        event_filter = self.install()
+        palette = _LifecyclePalette()
+        bootstrap._palette = palette
+        self.addCleanup(setattr, bootstrap, "_palette", None)
+        main_window_id = 4242
+
+        def fresh_main_window():
+            # qtmax.GetQMaxMainWindow() builds a NEW Python wrapper per call.
+            return _WrapperWindow(main_window_id)
+
+        def show():
+            palette.open()
+            return palette
+
+        with mock.patch.object(
+            bootstrap, "_max_main_window", fresh_main_window
+        ), mock.patch.object(bootstrap, "show_palette", side_effect=show) as shown:
+            # Press #1: native Win32 viewport focus, no Qt active window.
+            self.application.active = None
+            self.assertTrue(
+                event_filter.eventFilter(object(), _HotkeyEvent("press", "tab"))
+            )
+            self.assertTrue(palette._open)
+
+            # Escape closes the palette and clears the open state.
+            palette.cancel()
+            self.assertFalse(palette._open)
+            self.assertFalse(bootstrap._palette_is_open())
+
+            # Press #2: activeWindow() is now a *different wrapper* for the
+            # same Max main window and must still be treated as the viewport.
+            active_wrapper = fresh_main_window()
+            self.application.active = active_wrapper
+            self.assertIsNot(active_wrapper, fresh_main_window())
+            self.assertTrue(
+                event_filter.eventFilter(object(), _HotkeyEvent("press", "tab"))
+            )
+            self.assertTrue(palette._open)
+
+            # Press #3: closing, then an outside viewport deactivation, still
+            # reopens instead of leaving the hotkey stuck.
+            palette.cancel()
+            self.application.active = None
+            self.assertTrue(
+                event_filter.eventFilter(object(), _HotkeyEvent("press", "tab"))
+            )
+            self.assertEqual(shown.call_count, 3)
+
+        self.assertEqual(palette.suppressed, 3)
+
+    def test_foreign_active_window_still_keeps_normal_tab_traversal(self) -> None:
+        event_filter = self.install()
+        with mock.patch.object(
+            bootstrap, "show_palette", side_effect=AssertionError("stolen")
+        ), mock.patch.object(
+            bootstrap, "_max_main_window", lambda: _WrapperWindow(1)
+        ):
+            self.application.active = _WrapperWindow(2)
+            self.assertFalse(
+                event_filter.eventFilter(object(), _HotkeyEvent("press", "tab"))
+            )
+
+    def test_hotkey_filter_is_installed_only_on_the_application(self) -> None:
+        main_window = _InstallableWindow(7)
+        with mock.patch.object(
+            bootstrap, "_max_main_window", lambda: main_window
+        ):
+            event_filter = self.install()
+        self.assertEqual(self.application.filters, [event_filter])
+        self.assertEqual(main_window.filters, [])
+
+
+class PaletteOpenStateTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        bootstrap._palette = None
+
+    def test_hidden_palette_self_heals_instead_of_blocking_tab(self) -> None:
+        palette = _LifecyclePalette()
+        palette._open = True
+        palette.visible = False
+        bootstrap._palette = palette
+
+        self.assertFalse(bootstrap._palette_is_open())
+        self.assertEqual(palette.cancelled, 1)
+        self.assertFalse(palette._open)
+        self.assertFalse(bootstrap._palette_is_open())
+        self.assertEqual(palette.cancelled, 1)
+
+    def test_visible_open_palette_still_reports_open(self) -> None:
+        palette = _LifecyclePalette()
+        palette.open()
+        bootstrap._palette = palette
+
+        self.assertTrue(bootstrap._palette_is_open())
+        self.assertEqual(palette.cancelled, 0)
+
+    def test_palette_without_visibility_api_keeps_its_flag(self) -> None:
+        palette = SimpleNamespace(_open=True)
+        bootstrap._palette = palette
+
+        self.assertTrue(bootstrap._palette_is_open())
 
 
 class BootstrapImportTests(unittest.TestCase):

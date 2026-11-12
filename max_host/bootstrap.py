@@ -162,6 +162,70 @@ def _open_palette_from_tab() -> None:
             pass
 
 
+def _same_qt_window(left: Any, right: Any) -> bool:
+    """True when two objects wrap the same native Qt window.
+
+    Shiboken hands out a fresh Python wrapper for the same C++ pointer, so
+    ``is`` is unreliable for ``qtmax.GetQMaxMainWindow()``.  Shiboken does
+    implement ``__eq__`` on the C++ pointer, and ``winId()`` is the last
+    resort for wrappers created by different bindings.
+    """
+
+    if left is None or right is None:
+        return False
+    if left is right:
+        return True
+    try:
+        if bool(left == right):
+            return True
+    except Exception:
+        pass
+    left_win = getattr(left, "winId", None)
+    right_win = getattr(right, "winId", None)
+    if callable(left_win) and callable(right_win):
+        try:
+            return int(left_win()) == int(right_win())
+        except Exception:
+            return False
+    return False
+
+
+def _is_descendant_or_owned_by(widget: Any, ancestor: Any) -> bool:
+    """True when ``widget`` is ``ancestor`` or nested/owned inside it.
+
+    Floating viewport tear-offs and dock widgets report the Max QMainWindow as
+    their parent/window, so they must not be mistaken for a foreign modeless
+    dialog that keeps normal Tab traversal.
+    """
+
+    if widget is None or ancestor is None:
+        return False
+    current = widget
+    for _ in range(32):
+        if current is None:
+            return False
+        if _same_qt_window(current, ancestor):
+            return True
+        next_widget = None
+        parent_getter = getattr(current, "parentWidget", None)
+        if callable(parent_getter):
+            try:
+                next_widget = parent_getter()
+            except Exception:
+                next_widget = None
+        if next_widget is None:
+            window_getter = getattr(current, "window", None)
+            if callable(window_getter):
+                try:
+                    next_widget = window_getter()
+                except Exception:
+                    next_widget = None
+        if next_widget is None or _same_qt_window(next_widget, current):
+            return False
+        current = next_widget
+    return False
+
+
 def _tab_hotkey_eligible(qt_widgets: Any) -> bool:
     """True only when a viewport-like widget owns focus and no UI is modal."""
 
@@ -195,10 +259,17 @@ def _tab_hotkey_eligible(qt_widgets: Any) -> bool:
                 main_window = _max_main_window()
             except Exception:
                 main_window = None
-            if main_window is not None and active_window is not main_window:
-                # Modeless secondary windows (Scripting Listener, Slate
-                # Material Editor) keep normal Tab traversal.
-                return False
+            if main_window is not None:
+                # ``GetQMaxMainWindow()`` returns a new wrapper each call, and
+                # viewport tear-offs/docks are children of the same window, so
+                # compare by native identity instead of Python ``is``.
+                if not (
+                    _same_qt_window(active_window, main_window)
+                    or _is_descendant_or_owned_by(active_window, main_window)
+                ):
+                    # Modeless secondary windows (Scripting Listener, Slate
+                    # Material Editor) keep normal Tab traversal.
+                    return False
 
     getter = getattr(application, "focusWidget", None)
     focus = None
@@ -291,17 +362,10 @@ def install_tab_hotkey() -> Any:
     except Exception:
         return None
 
-    hosts = [application]
-    main_window = _max_main_window()
-    main_installer = getattr(main_window, "installEventFilter", None)
-    if callable(main_installer) and main_window is not application:
-        try:
-            main_installer(event_filter)
-            hosts.append(main_window)
-        except Exception:
-            pass
+    # An application-level filter already sees every event for every widget;
+    # also installing it on the main window would only duplicate deliveries.
     _tab_hotkey_filter = event_filter
-    _tab_hotkey_hosts = hosts
+    _tab_hotkey_hosts = [application]
     return event_filter
 
 
@@ -978,9 +1042,26 @@ def _palette_is_open() -> bool:
     if palette is None:
         return False
     state = getattr(palette, "_open", None)
+    visible = getattr(palette, "isVisible", None)
+    if isinstance(state, bool) and state:
+        if callable(visible):
+            try:
+                shown = bool(visible())
+            except Exception:
+                shown = True
+            if not shown:
+                # A hidden palette can never be "open": self-heal the flag so a
+                # missed hide/close notification cannot wedge the Tab hotkey.
+                cancel = getattr(palette, "cancel", None)
+                if callable(cancel):
+                    try:
+                        cancel()
+                    except Exception:
+                        pass
+                return False
+        return True
     if isinstance(state, bool):
         return state
-    visible = getattr(palette, "isVisible", None)
     if callable(visible):
         try:
             return bool(visible())

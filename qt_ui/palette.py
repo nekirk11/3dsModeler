@@ -212,6 +212,20 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             self._owner = owner
             super().__init__(parent)
 
+        def focusInEvent(self, event: Any) -> None:  # noqa: N802 - Qt signature
+            # Shiboken can wrap the same C++ widget in different Python objects,
+            # so mark the flag here instead of relying on eventFilter identity.
+            owner = self._owner
+            if owner is not None:
+                try:
+                    owner._input_had_focus = True
+                except AttributeError:
+                    pass
+            parent_event = getattr(qtwidgets.QLineEdit, "focusInEvent", None)
+            if parent_event is None:
+                return
+            parent_event(self, event)
+
         def focusNextPrevChild(self, next: bool) -> bool:  # noqa: N802
             # Tab is a context cycle, never Qt focus traversal.
             return False
@@ -278,6 +292,7 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             self._activation_key: Any = None
             self._activation_at = 0.0
             self._input_had_focus = False
+            self._shown_ready = False
             self._clock = time.monotonic
             self._dispatch_hook = self._prepare_dispatch
             self._last_key_event: Any = None
@@ -520,6 +535,7 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             # only treat a deactivate/focus-out as a close once the input has
             # actually held focus.
             self._input_had_focus = False
+            self._shown_ready = False
             self.show()
             self.raise_()
             self.activateWindow()
@@ -779,7 +795,11 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             if event_type == _event_type(qtcore, "KeyRelease"):
                 return self._handle_search_key_release(event)
             if event_type == qtcore.QEvent.Type.FocusIn:
-                if watched is self._input:
+                try:
+                    is_input = watched is self._input or watched == self._input
+                except Exception:
+                    is_input = watched is self._input
+                if is_input:
                     self._input_had_focus = True
                 return False
             if event_type == qtcore.QEvent.Type.FocusOut:
@@ -935,11 +955,25 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             ):
                 try:
                     if event.type() == qtcore.QEvent.Type.WindowDeactivate:
-                        if getattr(self, "_input_had_focus", False):
+                        # ``_input_had_focus`` can stay False when Shiboken
+                        # identity checks miss the focus event, so trust the
+                        # settled show state as well.
+                        if getattr(self, "_shown_ready", False) or getattr(
+                            self, "_input_had_focus", False
+                        ):
                             self._schedule_focus_check()
                 except Exception:
                     pass
             super().changeEvent(event)
+
+        def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt signature
+            # Alt+F4 and any other window close must always reset ``_open`` and
+            # restore Max's accelerators, never leave a zombie open palette.
+            try:
+                self.cancel()
+            except Exception:
+                pass
+            event.accept()
 
         def hideEvent(self, event: Any) -> None:  # noqa: N802 - Qt signature
             # An outside click on a Qt.Popup hides the window without a matching
@@ -950,7 +984,12 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
                 and getattr(self, "_open", False)
                 and getattr(self, "_suppress_hide", 0) == 0
             ):
-                self._schedule_focus_check()
+                # Reset immediately: a deferred check may never run if the
+                # event loop is busy with a native viewport interaction.
+                try:
+                    self.cancel()
+                except Exception:
+                    self._schedule_focus_check()
             super().hideEvent(event)
 
         # ---------------------------------------------------------- intents
@@ -1160,6 +1199,10 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             """
 
             self._refocus_input(respect_activation=True)
+            # The first show/focus settle is over; a later WindowDeactivate is a
+            # real outside click even if the focus-in flag was missed.
+            if not self._disposed and self._open and not self._cancelled:
+                self._shown_ready = True
 
         def _refocus_input(self, respect_activation: bool = False) -> None:
             if self._disposed or not self._open:
@@ -1198,15 +1241,35 @@ def build_search_palette_class(qtcore: Any, qtgui: Any, qtwidgets: Any) -> type:
             app = qtwidgets.QApplication.instance()
             if app is None:
                 return
-            focus = app.focusWidget()
-            if focus is not None and self._owns_widget(focus):
-                return  # child pill/confirmation focus is not an external blur
             active = app.activeWindow()
             external = (
                 active is not None
                 and active is not self
                 and active is not self.parentWidget()
             )
+            if self._window_is_active() is False:
+                # Clicking Max's native Win32/DirectX viewport HWND can leave a
+                # Qt child as ``focusWidget()`` while this window is no longer
+                # active; never treat that child focus as "still inside".
+                self._cancel_from_focus_loss(external)
+                return
+            focus = app.focusWidget()
+            if focus is not None and self._owns_widget(focus):
+                return  # child pill/confirmation focus is not an external blur
+            self._cancel_from_focus_loss(external)
+
+        def _window_is_active(self) -> Any:
+            """Qt's own activation state, or None when the host lacks it."""
+
+            getter = getattr(self, "isActiveWindow", None)
+            if not callable(getter):
+                return None
+            try:
+                return bool(getter())
+            except (RuntimeError, AttributeError, TypeError):
+                return None
+
+        def _cancel_from_focus_loss(self, external: bool) -> None:
             self._cancelled = True
             try:
                 self._controller.cancel(reason="")

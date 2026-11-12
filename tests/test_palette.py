@@ -1307,6 +1307,41 @@ class FakeQtPaletteTests(unittest.TestCase):
         self.assertEqual(self.controller.count("cancel"), 1)
         self.assertIs(self.app.focusWidget(), outside)
 
+    def test_window_deactivate_cancels_even_when_a_child_still_has_qt_focus(self) -> None:
+        """Win32 viewport clicks leave the input as focusWidget while inactive."""
+
+        palette = self.make()
+        _Timer.flush()  # the initial tick-0 show/focus settle
+        self.assertTrue(palette._shown_ready)
+        self.assertIs(self.app.focusWidget(), palette._input)
+        # Qt still reports the search field as focused, but the window itself
+        # is no longer active: this must close, not bail out on child focus.
+        palette.isActiveWindow = lambda: False
+
+        palette.changeEvent(_Event(_EventType.WindowDeactivate))
+        _Timer.flush()
+        self.assertEqual(self.controller.count("cancel"), 1)
+        self.assertFalse(palette._open)
+        _Timer.flush()
+        self.assertEqual(self.controller.count("cancel"), 1)
+
+    def test_window_close_cancels_and_clears_open_state(self) -> None:
+        palette = self.make()
+        self.assertTrue(palette._open)
+
+        palette.closeEvent(_Event(_EventType.WindowTitleChange))
+
+        self.assertFalse(palette._open)
+        self.assertEqual(self.controller.count("cancel"), 1)
+
+    def test_window_hide_cancels_immediately_and_clears_open_state(self) -> None:
+        palette = self.make()
+
+        palette.hide()  # OS-level hide / Alt+F4 without a controller call
+
+        self.assertFalse(palette._open)
+        self.assertEqual(self.controller.count("cancel"), 1)
+
     def test_outside_popup_hide_cancels_once(self) -> None:
         palette = self.make()
         outside = _Widget()
